@@ -76,7 +76,8 @@ def t_mask_controls(an, p) -> Result:
     soft = an.bank.effective(name, size, src, feather=fe)
     sigma = max(size) * (0.0012 + 0.018 * fe / 100)
     k = int(4 * sigma)                       # beyond 4 sigma a soft edge must have faded away completely
-    outside = cv2.dilate((base > 0.5).astype(np.uint8), cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * k + 1, 2 * k + 1))) == 0
+    # measured from wherever the raw mask has ANY support (a sky reflected in water legitimately carries a weak sky response)
+    outside = cv2.dilate((base > 0.02).astype(np.uint8), cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * k + 1, 2 * k + 1))) == 0
     leak = float(soft[outside].max()) if outside.any() else 0.0
     grew = abs(float((soft > 0.5).mean()) - float((base > 0.5).mean()))
     checks = {
@@ -585,6 +586,35 @@ def t_adaptive_looks(an, p) -> Result:
         bool(not bad and real), f"failed: {bad or 'none'}; this photo: range {ta.rng:.2f}, flat {ta.flat:.2f}, gap {ta.gap:.2f}, adaptive ×{le.adaptive_strength(ta):.2f}"
 
 
+def t_sky_studio(an, p) -> Result:
+    import sky_engine as se
+    r = se.read_sky(an)
+    if r is None:
+        sg = se.suggest(an)
+        return "sky studio: photos without a sky are handled (no sky read, no suggestions)", sg["sky"] is None and not sg["sky_treatments"], "no sky in this photo"
+    base = _render_arr(an, p, 600)
+    size = (base.shape[1], base.shape[0])
+    sky = an.bank.get("sky", size)
+    bad, fits = [], se.fit_scores(r, an.read.light if an.read else None)
+    for tid in se.TREATMENTS:
+        q, notes, _ = se.apply(an, p, tid, 1.0)
+        o = _render_arr(an, q, 600)
+        d = np.abs(o - base).max(axis=2)
+        inside, leak = float(d[sky > 0.5].mean()), float(d[sky < 0.02].mean())
+        clip = float((o.max(2) > 0.995).mean() - (base.max(2) > 0.995).mean())
+        med = float(np.median(_luma(o)))
+        if not (leak < 0.004 and clip < 0.04 and 0.2 < med < 0.75 and inside > 0.003 and all(l.limit == "sky" for l in q.masks if l.id.startswith("sky_"))):
+            bad.append(tid)
+    # strength 0 must leave the sky alone; the best-fitting treatment must be a plausible match for what the sky is
+    q0, _, _ = se.apply(an, p, "deep_blue", 0.0)
+    zero = float(np.abs(_render_arr(an, q0, 600) - base).max(axis=2)[sky > 0.5].mean())
+    sg = se.suggest(an)
+    top = sg["sky_treatments"][0]
+    ok_rank = top["fit"] == max(fits.values()) and len(sg["looks"]) == 3
+    return "sky studio: every treatment stays inside the sky, is safe, 0% changes nothing, and suggestions are ranked", \
+        bool(not bad and zero < 0.004 and ok_rank), f"sky is '{r.kind}'; unsafe: {bad or 'none'}; 0% change {zero:.4f}; top treatment {top['id']} ({top['fit']}); looks {[l['id'] for l in sg['looks']]}"
+
+
 TESTS: List[Callable] = [
     t_mask_alignment_and_range, t_mask_operations, t_mask_controls, t_local_edit_stays_inside_mask,
     t_db_off_is_identity, t_db_highlights_and_shadows_protected, t_db_preserves_skin_texture, t_db_no_halo,
@@ -592,7 +622,7 @@ TESTS: List[Callable] = [
     t_render_size_matches_image, t_neutral_params_are_identity, t_slider_directions, t_srgb_pipeline, t_light_scene_read,
     t_custom_mask_shapes, t_gradient_and_radial_geometry, t_brush_resolution_independent, t_range_masks_select_what_they_claim,
     t_mask_limit_and_refine, t_custom_mask_edit_stays_inside, t_point_curve,
-    t_region_coverage, t_region_paint_fix, t_lut_behaviour, t_match_reference, t_banded_ops_are_exact, t_smart_looks, t_adaptive_looks,
+    t_region_coverage, t_region_paint_fix, t_lut_behaviour, t_match_reference, t_banded_ops_are_exact, t_smart_looks, t_adaptive_looks, t_sky_studio,
 ]
 
 

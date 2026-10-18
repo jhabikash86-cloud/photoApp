@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Slider from './Slider';
+import Toggle from './Toggle';
+import type { Suggest } from './SkyPanel';
 import { Sub } from './panels';
 import { API_URL, EditCtx, Params, newLayer } from '../lib/params';
 
@@ -74,7 +76,7 @@ async function getJSON<T>(path: string, body?: unknown, form?: FormData): Promis
 const chip = (on: boolean) =>
   `px-3 py-2 rounded-lg text-[13px] border transition-colors ${on ? 'border-indigo-400 bg-indigo-950 text-indigo-100' : 'border-zinc-700 text-zinc-200 hover:border-zinc-500 hover:bg-zinc-800/60'}`;
 
-export default function LooksPanel({ ctx }: { ctx: EditCtx }) {
+export default function LooksPanel({ ctx, suggest }: { ctx: EditCtx; suggest: Suggest | null }) {
   const { p, sid } = ctx;
   const [luts, setLuts] = useState<LutItem[]>([]);
   const [previews, setPreviews] = useState<Record<string, string>>({});
@@ -87,6 +89,7 @@ export default function LooksPanel({ ctx }: { ctx: EditCtx }) {
   const [looks, setLooks] = useState<LookItem[]>([]);
   const [land, setLand] = useState<LookState | null>(lookStore.get(sid) ?? null);
   const [busyLook, setBusyLook] = useState(false);
+  const [smartSky, setSmartSky] = useState(true);
   const lookTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lutFile = useRef<HTMLInputElement>(null);
   const refFile = useRef<HTMLInputElement>(null);
@@ -113,13 +116,13 @@ export default function LooksPanel({ ctx }: { ctx: EditCtx }) {
     setBusyLook(true);
     try {
       const gr = ctx.analysis.grade;
-      const d = await getJSON<{ params: Params; notes: string[]; facts: { regions: string[] } }>('/api/look', { session_id: sid, look_id: id, params: pRef.current, strength: Math.round(k * 100), light: gr?.light, scene: gr?.scene });
+      const d = await getJSON<{ params: Params; notes: string[]; facts: { regions: string[] } }>('/api/look', { session_id: sid, look_id: id, params: pRef.current, strength: Math.round(k * 100), light: gr?.light, scene: gr?.scene, smart_sky: smartSky });
       ctx.update(() => d.params, true, true);
       setLandState({ id, k, notes: d.notes, regions: d.facts.regions });
     } catch (e) { ctx.flash(e instanceof Error ? e.message : 'Could not apply that look'); }
     finally { setBusyLook(false); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sid, ctx]);
+  }, [sid, ctx, smartSky]);
   const onLookStrength = (v: number) => {
     if (!land) return;
     setLandState({ ...land, k: v / 100 });
@@ -205,7 +208,26 @@ export default function LooksPanel({ ctx }: { ctx: EditCtx }) {
 
   return (
     <>
+      {suggest && suggest.looks.length > 0 && (
+        <Sub title="Suggested for this photo">
+          <p className="text-[11px] leading-relaxed text-zinc-500">Picked after analysing this picture (light, scene, sky and tones).</p>
+          {suggest.looks.map((l, i) => (
+            <button key={l.id} disabled={busyLook} onClick={() => runLook(l.id, land?.k ?? 1)}
+              className={`rounded-lg border px-3 py-2.5 text-left transition-colors disabled:opacity-60 ${land?.id === l.id ? 'border-indigo-400 bg-indigo-950' : 'border-zinc-700 hover:border-zinc-500 hover:bg-zinc-800/60'}`}>
+              <div className="flex items-center justify-between">
+                <span className="text-[13px] font-medium text-zinc-100">{i === 0 ? '★ ' : ''}{l.label}</span>
+                <span className="text-[10.5px] text-zinc-500">{Math.round(l.fit * 100)}% fit</span>
+              </div>
+              <div className="mt-0.5 text-[11px] text-zinc-400">{l.reason}</div>
+            </button>
+          ))}
+        </Sub>
+      )}
+
       <Sub title="Smart looks">
+        {suggest?.sky && (
+          <Toggle checked={smartSky} onChange={setSmartSky} small label={`Include a premium sky (${suggest.sky.label.toLowerCase()})`} title="Also applies the sky treatment that fits this sky best; adjust it in the Sky tab" />
+        )}
         <p className="text-[11px] leading-relaxed text-zinc-500">One click reads the photo (light, scene, every region) and builds the edit: a colour grade, a different adjustment for each region (sky, mountains, water, trees, foreground; skin protected) and the lighting. Everything stays editable.</p>
         <div className="grid grid-cols-2 gap-1.5">
           {looks.map((pr) => (

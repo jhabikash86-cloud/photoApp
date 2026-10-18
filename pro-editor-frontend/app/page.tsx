@@ -13,6 +13,7 @@ import Slider from './components/Slider';
 import Toggle from './components/Toggle';
 import LooksPanel from './components/LooksPanel';
 import RegionPresetsPanel from './components/RegionPresetsPanel';
+import SkyPanel, { Suggest } from './components/SkyPanel';
 import Rail, { RAIL, TabId } from './components/Rail';
 import { ColourGradingPanel, CurvesPanel, DodgeBurnPanel, EffectsPanel, MaskUI, MaskingPanel, SimplePanel, Sub } from './components/panels';
 import MaskOverlay, { BrushCfg, DEFAULT_BRUSH } from './components/MaskOverlay';
@@ -68,6 +69,7 @@ export default function Editor() {
   const [selMask, setSelMask] = useState<string | null>(null);
   const [maskEditing, setMaskEditing] = useState(true);
   const [picking, setPicking] = useState(false);
+  const [suggestions, setSuggestions] = useState<{ sid: string; data: Suggest } | null>(null);
   const [fixing, setFixing] = useState(false);          // painting corrections onto the selected automatic region
   const [showCustomMask, setShowCustomMask] = useState(true);
   const [brush, setBrush] = useState<BrushCfg>(DEFAULT_BRUSH);
@@ -369,6 +371,16 @@ export default function Editor() {
     patch(active.id, { autoOn: v });
   };
 
+  // what suits THIS photo (sky read, ranked sky treatments and looks): fetched once per photo
+  const sugSid = ready ? active?.sid : undefined;
+  useEffect(() => {
+    if (!sugSid) return;
+    let live = true;
+    fetch(`${API_URL}/api/suggest/${sugSid}`).then((r) => r.json()).then((d) => { if (live && d.looks) setSuggestions({ sid: sugSid, data: d }); }).catch(() => {});
+    return () => { live = false; };
+  }, [sugSid]);
+  const suggest = suggestions && suggestions.sid === sugSid ? suggestions.data : null;
+
   // overlay of the ONE selected mask, reflecting its feather / refine / invert / strength as the user moves them
   const selR = p?.regions[selRegion];
   const strokeSig = (selR?.strokes ?? []).map((st) => `${st.pts.length}${st.erase ? 'e' : 'a'}${st.size}`).join(',').replace(/\|/g, '');
@@ -506,7 +518,7 @@ export default function Editor() {
             <>
               <div className="p-3 border-b border-zinc-800 shrink-0"><Histogram data={active.histogram} clipOn={clipOn} onToggleClip={() => setClipOn((v) => !v)} /></div>
               <div className="flex items-center justify-between px-4 py-2.5 border-b border-zinc-800 shrink-0">
-                <span className="text-[15px] font-semibold text-zinc-100">{RAIL.find((r) => r.id === tab)?.label === 'Regions' ? 'Region presets' : tab === 'dodge' ? 'Dodge & burn' : RAIL.find((r) => r.id === tab)?.label}</span>
+                <span className="text-[15px] font-semibold text-zinc-100">{RAIL.find((r) => r.id === tab)?.label === 'Regions' ? 'Region presets' : tab === 'sky' ? 'Sky studio' : tab === 'dodge' ? 'Dodge & burn' : RAIL.find((r) => r.id === tab)?.label}</span>
                 <span className="text-[10px] text-zinc-500" title="Adjustments you changed by hand from the automatic start">
                   {manual > 0 ? `${manual} manual change${manual > 1 ? 's' : ''}` : 'automatic start'}
                 </span>
@@ -534,7 +546,8 @@ export default function Editor() {
               <SimplePanel ctx={ctx} ctl={{ strengths: active.strengths ?? {}, setStrength, setLightScene, busy }} />
               </>)}
 
-              {tab === 'looks' && <LooksPanel key={active.sid} ctx={ctx} />}
+              {tab === 'looks' && <LooksPanel key={active.sid} ctx={ctx} suggest={suggest} />}
+              {tab === 'sky' && <SkyPanel key={active.sid} ctx={ctx} suggest={suggest} onMasks={() => setTab('masks')} />}
               {tab === 'light' && <ColourGradingPanel ctx={ctx} part="light" />}
               {tab === 'colour' && <ColourGradingPanel ctx={ctx} part="colour" />}
               {tab === 'presets' && <RegionPresetsPanel ctx={ctx} onTune={(r) => { setSelRegion(r); setTab('masks'); }} />}

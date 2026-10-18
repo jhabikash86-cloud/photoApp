@@ -2,7 +2,7 @@
 
 import { ReactNode } from 'react';
 
-export type TabId = 'auto' | 'light' | 'colour' | 'looks' | 'presets' | 'masks' | 'curves' | 'dodge' | 'effects' | 'info';
+export type TabId = 'auto' | 'light' | 'colour' | 'looks' | 'sky' | 'presets' | 'masks' | 'curves' | 'dodge' | 'effects' | 'info';
 
 const I = (d: ReactNode) => (
   <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">{d}</svg>
@@ -12,6 +12,7 @@ export const RAIL: { id: TabId; label: string; icon: ReactNode }[] = [
   { id: 'light', label: 'Light', icon: I(<><circle cx="12" cy="12" r="4" /><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6 7 7M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4" /></>) },
   { id: 'colour', label: 'Colour', icon: I(<><path d="M12 3c4.5 5 6.5 7.8 6.5 10.5a6.5 6.5 0 0 1-13 0C5.5 10.8 7.5 8 12 3Z" /></>) },
   { id: 'looks', label: 'Looks', icon: I(<><rect x="3.5" y="5" width="17" height="14" rx="2.5" /><path d="M3.5 15 9 10l4 4 2.5-2 5 4.5" /></>) },
+  { id: 'sky', label: 'Sky', icon: I(<><path d="M7 17h10a3.5 3.5 0 0 0 .3-7A5 5 0 0 0 7.6 9.2 4 4 0 0 0 7 17Z" /><path d="M4 21h16" opacity=".45" /></>) },
   { id: 'presets', label: 'Regions', icon: I(<><path d="M4 18c3-6 5-6 8-2s5 2 8-6" /><path d="M4 7h6M14 5h6" /></>) },
   { id: 'masks', label: 'Masks', icon: I(<><circle cx="12" cy="12" r="8" strokeDasharray="3 2.4" /><circle cx="12" cy="12" r="3.2" /></>) },
   { id: 'curves', label: 'Curves', icon: I(<><path d="M4 20C9 19 9 5 20 4" /><path d="M4 20h16V4" opacity=".45" /></>) },
@@ -23,7 +24,7 @@ export const RAIL: { id: TabId; label: string; icon: ReactNode }[] = [
 /** Vertical icon rail (like Lightroom): click an icon, its list of actions opens beside it. */
 export default function Rail({ tab, onTab, dots }: { tab: TabId; onTab: (t: TabId) => void; dots?: Partial<Record<TabId, number>> }) {
   return (
-    <nav className="flex w-[72px] shrink-0 flex-col items-center gap-1 border-l border-zinc-800 bg-[#18181b] py-3" aria-label="Edit tools">
+    <nav className="flex w-[72px] shrink-0 flex-col items-center gap-1 overflow-y-auto border-l border-zinc-800 bg-[#18181b] py-3" aria-label="Edit tools">
       {RAIL.map((r) => {
         const on = tab === r.id;
         return (

@@ -18,6 +18,7 @@ import adjust
 import engine
 import look_engine
 import luts
+import sky_engine
 import match
 import immich
 from engine import Analysis
@@ -554,6 +555,7 @@ class LookRequest(BaseModel):
     strength: float = 100         # percent, 0..150
     light: Optional[str] = None
     scene: Optional[str] = None
+    smart_sky: bool = False       # also apply the best-fitting premium sky treatment
 
 
 @app.post("/api/look")
@@ -564,4 +566,41 @@ def apply_look(req: LookRequest):
         raise HTTPException(404, "Unknown look.")
     with LOCKS[req.session_id]:
         p, notes, facts = look_engine.build(an, req.params, look, req.strength / 100.0, req.light, req.scene)
+        if req.smart_sky:
+            r = sky_engine.read_sky(an)
+            if r is not None and r.share >= 0.08:
+                fits = sky_engine.fit_scores(r, facts.get("light"))
+                best = max(fits, key=fits.get)
+                if fits[best] >= 0.5:
+                    p, sky_notes, _ = sky_engine.apply(an, p, best, 0.8 * req.strength / 100.0)
+                    notes += [f"Smart sky: {sky_engine.TREATMENTS[best].label}"] + sky_notes[1:]
+                    facts["sky_treatment"] = best
     return {"params": p.model_dump(), "notes": notes, "facts": facts}
+
+
+# ---------------------------------------------------------------------------------------------
+# Sky studio and suggestions
+# ---------------------------------------------------------------------------------------------
+@app.get("/api/suggest/{sid}")
+def suggest(sid: str):
+    an = _session(sid)
+    with LOCKS[sid]:
+        return sky_engine.suggest(an)
+
+
+class SkyRequest(BaseModel):
+    session_id: str
+    treatment: str
+    params: EditParams
+    strength: float = 100
+
+
+@app.post("/api/sky")
+def apply_sky(req: SkyRequest):
+    an = _session(req.session_id)
+    with LOCKS[req.session_id]:
+        try:
+            p, notes, sky = sky_engine.apply(an, req.params, req.treatment, req.strength / 100.0)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+    return {"params": p.model_dump(), "notes": notes, "sky": sky}
