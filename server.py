@@ -692,16 +692,35 @@ def library_thumb(pid: int):
     return FileResponse(f, media_type="image/jpeg")
 
 
+def _immich_asset_for(pid: int) -> Optional[str]:
+    """The Immich copy of a library photo (or of the photo it duplicates), if it has been uploaded."""
+    db = library.connect()
+    try:
+        row = db.execute("SELECT m.asset_id FROM immich_map m JOIN photos p ON m.photo_id=COALESCE(p.dup_of, p.id) WHERE p.id=?", (pid,)).fetchone()
+    except Exception:
+        return None
+    return row[0] if row else None
+
+
 @app.get("/api/library/file/{pid}")
 def library_file(pid: int):
-    """The original file, streamed from the drive (the editor then opens it like any dropped file)."""
+    """The original file. From the external drive when it is plugged in; otherwise streamed from the copy in Immich."""
+    from fastapi.responses import StreamingResponse
     ph = library.photo(pid)
     if ph is None:
         raise HTTPException(404, "No such photo.")
     path = library.abs_path(ph["path"])
-    if not os.path.exists(path):
-        raise HTTPException(404, "The external drive is not connected.")
-    return FileResponse(path, filename=os.path.basename(path))
+    if os.path.exists(path):
+        return FileResponse(path, filename=os.path.basename(path))
+    aid = _immich_asset_for(pid)
+    if aid and immich.configured():
+        import requests
+        base = (os.environ.get("IMMICH_UPLOAD_URL") or os.environ["IMMICH_URL"]).rstrip("/")
+        up = requests.get(f"{base}/api/assets/{aid}/original", headers={**immich.HEADERS_BASE, "x-api-key": os.environ["IMMICH_API_KEY"]}, stream=True, timeout=120)
+        if up.status_code == 200:
+            return StreamingResponse(up.iter_content(1 << 20), media_type="application/octet-stream",
+                                     headers={"Content-Disposition": f'attachment; filename="{os.path.basename(ph["path"])}"', "Content-Length": up.headers.get("Content-Length", "")})
+    raise HTTPException(404, "The external drive is not connected, and this photo is not in Immich yet.")
 
 
 # ---------------------------------------------------------------------------------------------

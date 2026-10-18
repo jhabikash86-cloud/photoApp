@@ -16,6 +16,7 @@ const chip = (on: boolean) =>
 export default function LibraryDialog({ onClose, onOpen }: { onClose: () => void; onOpen: (files: File[]) => void }) {
   const [groups, setGroups] = useState<Group[] | null>(null);
   const [connected, setConnected] = useState(true);
+  const [inImmich, setInImmich] = useState(0);
   const [album, setAlbum] = useState('all');
   const [title, setTitle] = useState('All travel photos');
   const [kind, setKind] = useState<'' | 'raw' | 'processed'>('');
@@ -29,7 +30,7 @@ export default function LibraryDialog({ onClose, onOpen }: { onClose: () => void
   const [error, setError] = useState('');
 
   useEffect(() => {
-    fetch(`${API_URL}/api/library/albums`).then((r) => r.json()).then((d) => { setGroups(d.groups); setConnected(d.connected); })
+    fetch(`${API_URL}/api/library/albums`).then((r) => r.json()).then((d) => { setGroups(d.groups); setConnected(d.connected); setInImmich(d.immich_copies ?? 0); })
       .catch(() => setError(`Can't reach the server at ${API_URL}.`));
   }, []);
 
@@ -75,7 +76,11 @@ export default function LibraryDialog({ onClose, onOpen }: { onClose: () => void
           <h2 className="text-[15px] font-semibold text-zinc-100">Travel library</h2>
           <button onClick={onClose} className="rounded-md px-2 py-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" aria-label="Close">✕</button>
         </div>
-        {!connected && <p className="mb-3 rounded-lg bg-amber-950 p-2 text-[11px] text-amber-200">The external drive is not connected: thumbnails already made still show, but photos can&apos;t be opened until it is plugged in.</p>}
+        {!connected && (
+          <p className="mb-3 rounded-lg bg-amber-950 p-2 text-[11px] text-amber-200">
+            The external drive is not connected. Albums and thumbnails still work.{inImmich > 0 ? ` Photos open from their copy in Immich instead (${inImmich.toLocaleString()} uploaded so far).` : ' Photos can\u2019t be opened until it is plugged in.'}
+          </p>
+        )}
         {!groups && <p className="text-[12px] text-zinc-500">Loading albums…</p>}
         {groups?.map((g) => (
           <div key={g.title} className="mb-4">

@@ -194,7 +194,11 @@ def albums() -> dict:
     out.append({"title": "By subject", "albums": [entry(f"subject:{s}", s, f"{base} AND subject=?", (s,)) for s in SUBJECTS if subj.get(s)]})
     places = q(f"SELECT country, place, COUNT(*) n FROM photos WHERE {base} AND place!='' AND country IS NOT NULL GROUP BY country, place HAVING n>=8 ORDER BY country, MIN(taken)")
     out.append({"title": "By place", "albums": [entry(f"place:{r['country']}|{r['place']}", f"{r['country']} · {r['place']}", f"{base} AND country=? AND place=?", (r["country"], r["place"])) for r in places]})
-    return {"groups": out, "root": root(), "connected": drive_connected()}
+    try:
+        in_immich = db.execute("SELECT COUNT(*) FROM immich_map").fetchone()[0]
+    except Exception:
+        in_immich = 0
+    return {"groups": out, "root": root(), "connected": drive_connected(), "immich_copies": in_immich}
 
 
 def photos(album: str, order: str = "taken", limit: int = 120, offset: int = 0, kind: Optional[str] = None, subject: Optional[str] = None) -> dict:

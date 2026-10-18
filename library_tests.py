@@ -37,6 +37,29 @@ check("a photo is found on the second copy when the primary drive is missing",
 open(os.path.join(_a, "Trip.tmp"), "w").close()
 os.makedirs(os.path.join(_a, "Trip"), exist_ok=True); open(os.path.join(_a, "Trip", "x.nef"), "w").write("primary")
 check("the primary drive is preferred when both exist", lib.resolve("Trip/x.nef", [_a, _b]) == os.path.join(_a, "Trip", "x.nef"))
+# ---- the Immich fallback for opening originals
+try:
+    _n = lib.connect().execute("SELECT COUNT(*) FROM immich_map").fetchone()[0]
+except Exception:
+    _n = 0
+if _n:
+    import asyncio, hashlib
+    _row = lib.connect().execute("SELECT p.id, p.path, p.size FROM photos p JOIN immich_map m ON m.photo_id=p.id WHERE p.size<60000000 AND p.dup_of IS NULL LIMIT 1").fetchone()
+    if _row and os.path.exists(lib.abs_path(_row["path"])):
+        import server as _server
+        _src = hashlib.sha256(open(lib.abs_path(_row["path"]), "rb").read()).hexdigest()
+        _real_root = lib.root
+        lib.root = lambda: "/Volumes/DRIVE-NOT-PLUGGED/HP_Laptop"
+        try:
+            _resp = _server.library_file(_row["id"])
+            async def _collect():
+                h = hashlib.sha256()
+                async for c in _resp.body_iterator:
+                    h.update(c)
+                return h.hexdigest()
+            check("with the drive unplugged, an original streams from Immich byte-for-byte", asyncio.run(_collect()) == _src)
+        finally:
+            lib.root = _real_root
 # ---- the catalog
 if not lib.DB_PATH.exists():
     print("  (no catalog yet: run build_library.py meta)")
