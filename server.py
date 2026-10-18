@@ -1,3 +1,4 @@
+import os
 import threading
 import uuid
 from collections import OrderedDict
@@ -10,12 +11,14 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import adjust
 import engine
+import library
 import look_engine
 import luts
 import sky_engine
@@ -644,3 +647,56 @@ def sky_plan(req: SkyPlanRequest):
         except ValueError as e:
             raise HTTPException(400, str(e))
     return {"sky_replace": sr.model_dump()}
+
+
+# ---------------------------------------------------------------------------------------------
+# Library: read-only catalog of the travel photos on the external drive (see library.py / build_library.py)
+# ---------------------------------------------------------------------------------------------
+@app.get("/api/library/albums")
+def library_albums():
+    return library.albums()
+
+
+@app.get("/api/library/photos")
+def library_photos(album: str = "all", order: str = "taken", limit: int = 120, offset: int = 0, kind: Optional[str] = None, subject: Optional[str] = None):
+    try:
+        return library.photos(album, order, min(max(limit, 1), 400), max(offset, 0), kind, subject)
+    except ValueError:
+        raise HTTPException(400, "Unknown album.")
+
+
+@app.get("/api/library/thumb/{pid}")
+def library_thumb(pid: int):
+    f = library.THUMB_DIR / f"{pid}.jpg"
+    if f.exists():
+        return FileResponse(f, media_type="image/jpeg", headers={"Cache-Control": "max-age=86400"})
+    ph = library.photo(pid)
+    if ph is None:
+        raise HTTPException(404, "No such photo.")
+    # a duplicate or an edited export shares the thumbnail of the photo it came from; otherwise make one from the drive on demand
+    for other in (ph.get("dup_of"), ph.get("raw_id")):
+        if other and (library.THUMB_DIR / f"{other}.jpg").exists():
+            return FileResponse(library.THUMB_DIR / f"{other}.jpg", media_type="image/jpeg", headers={"Cache-Control": "max-age=86400"})
+    path = library.abs_path(ph["path"])
+    if not os.path.exists(path):
+        raise HTTPException(404, "The drive is not connected.")
+    import build_library
+    try:
+        im, _ = build_library._preview(path)
+        im.thumbnail((480, 480))
+        im.save(f, "JPEG", quality=82)
+    except Exception as e:
+        raise HTTPException(415, f"Could not read this file: {e}")
+    return FileResponse(f, media_type="image/jpeg")
+
+
+@app.get("/api/library/file/{pid}")
+def library_file(pid: int):
+    """The original file, streamed from the drive (the editor then opens it like any dropped file)."""
+    ph = library.photo(pid)
+    if ph is None:
+        raise HTTPException(404, "No such photo.")
+    path = library.abs_path(ph["path"])
+    if not os.path.exists(path):
+        raise HTTPException(404, "The external drive is not connected.")
+    return FileResponse(path, filename=os.path.basename(path))

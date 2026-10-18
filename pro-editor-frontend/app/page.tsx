@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Canvas, { CompareMode } from './components/Canvas';
 import BatchDialog from './components/BatchDialog';
+import LibraryDialog from './components/LibraryDialog';
 import Filmstrip from './components/Filmstrip';
 import Histogram from './components/Histogram';
 import Slider from './components/Slider';
@@ -82,6 +83,7 @@ export default function Editor() {
   const [maskOverlay, setMaskOverlay] = useState<{ key: string; url: string } | null>(null);
   const [dragging, setDragging] = useState(false);
   const [batchOpen, setBatchOpen] = useState(false);
+  const [libraryOpen, setLibraryOpen] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const itemsRef = useRef<Item[]>([]);
   const activeRef = useRef<string | null>(null);
@@ -455,6 +457,7 @@ export default function Editor() {
       <header className="h-14 shrink-0 flex items-center gap-3 px-4 border-b border-zinc-800 bg-[#18181b]">
         <span className="font-black tracking-tight text-indigo-400">⚡ NEURAL EDIT PRO</span>
         <button onClick={() => fileInput.current?.click()} className="px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-[13px]">Open photos…</button>
+        <button onClick={() => setLibraryOpen(true)} title="Browse the travel photo albums from the external drive" className="px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-[13px]">Library…</button>
         <button onClick={() => setBatchOpen(true)} title="Edit a whole Immich album" className="px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-[13px]">Batch (Immich)…</button>
         <span className="text-xs text-zinc-500 truncate max-w-[260px]">{active ? `${active.name}${active.megapixels ? ` · ${active.megapixels} MP` : ''}${active.raw ? ' · RAW' : ''}` : ''}</span>
         <div className="flex-1" />
@@ -475,6 +478,7 @@ export default function Editor() {
       </header>
 
       {batchOpen && <BatchDialog onClose={() => setBatchOpen(false)} />}
+      {libraryOpen && <LibraryDialog onClose={() => setLibraryOpen(false)} onOpen={(files) => openFiles(files)} />}
       <div className="flex flex-1 min-h-0">
         {/* canvas + filmstrip */}
         <div className="flex-1 min-w-0 flex flex-col relative">
