@@ -12,6 +12,8 @@ import Histogram from './components/Histogram';
 import Slider from './components/Slider';
 import Toggle from './components/Toggle';
 import LooksPanel from './components/LooksPanel';
+import RegionPresetsPanel from './components/RegionPresetsPanel';
+import Rail, { RAIL, TabId } from './components/Rail';
 import { ColourGradingPanel, CurvesPanel, DodgeBurnPanel, EffectsPanel, MaskUI, MaskingPanel, SimplePanel, Sub } from './components/panels';
 import MaskOverlay, { BrushCfg, DEFAULT_BRUSH } from './components/MaskOverlay';
 import { makeClipOverlay } from './lib/clip';
@@ -62,7 +64,7 @@ export default function Editor() {
   const [exporting, setExporting] = useState(false);
   const [message, setMessage] = useState('');
   const [selRegion, setSelRegion] = useState('sky');
-  const [tab, setTab] = useState<'looks' | 'grade' | 'masks' | 'curves' | 'dodge' | 'effects' | 'info'>('grade');
+  const [tab, setTab] = useState<TabId>('auto');
   const [selMask, setSelMask] = useState<string | null>(null);
   const [maskEditing, setMaskEditing] = useState(true);
   const [picking, setPicking] = useState(false);
@@ -496,21 +498,26 @@ export default function Editor() {
           <Filmstrip items={items} activeId={activeId} onSelect={setActiveId} onRemove={remove} onAdd={() => fileInput.current?.click()} />
         </div>
 
-        {/* right panel */}
-        <aside className="w-[400px] shrink-0 border-l border-zinc-800 bg-[#1f1f23] overflow-y-auto">
+        {/* right: tool panel + icon rail */}
+        <div className="flex shrink-0">
+        <aside className="w-[372px] shrink-0 bg-[#1f1f23] flex flex-col min-h-0">
           {!ctx && <p className="p-5 text-xs text-zinc-500">Open a photo to start. Every slider is a real adjustment, set by Auto and ready to move.</p>}
           {ctx && p && auto && active && (
             <>
-              <div className="p-3 border-b border-zinc-800"><Histogram data={active.histogram} clipOn={clipOn} onToggleClip={() => setClipOn((v) => !v)} /></div>
-
+              <div className="p-3 border-b border-zinc-800 shrink-0"><Histogram data={active.histogram} clipOn={clipOn} onToggleClip={() => setClipOn((v) => !v)} /></div>
+              <div className="flex items-center justify-between px-4 py-2.5 border-b border-zinc-800 shrink-0">
+                <span className="text-[15px] font-semibold text-zinc-100">{RAIL.find((r) => r.id === tab)?.label === 'Regions' ? 'Region presets' : tab === 'dodge' ? 'Dodge & burn' : RAIL.find((r) => r.id === tab)?.label}</span>
+                <span className="text-[10px] text-zinc-500" title="Adjustments you changed by hand from the automatic start">
+                  {manual > 0 ? `${manual} manual change${manual > 1 ? 's' : ''}` : 'automatic start'}
+                </span>
+              </div>
+              <div className="flex-1 min-h-0 overflow-y-auto">
+              {tab === 'auto' && (<>
               <div className="px-4 py-3 border-b border-zinc-800 flex flex-col gap-3">
                 <div className="flex items-center justify-between">
                   <Toggle checked={active.autoOn !== false} onChange={toggleAuto} label="Auto Edit"
                     title="On: the editor's automatic starting edit. Off: neutral, with no adjustments." />
-                  <span className="text-[10px] text-zinc-500" title="Adjustments you changed by hand from the automatic start">
-                    {manual > 0 ? `${manual} manual change${manual > 1 ? 's' : ''}` : 'automatic start'}
-                  </span>
-                  <button onClick={() => { resetAll(); patch(active.id, { autoOn: true }); }} className="text-[10px] text-indigo-400 hover:text-indigo-300" title="Reset all adjustments (R)">Reset all</button>
+                  <button onClick={() => { resetAll(); patch(active.id, { autoOn: true }); }} className="text-[11px] text-indigo-400 hover:text-indigo-300" title="Reset all adjustments (R)">Reset all</button>
                 </div>
                 <Slider label="Edit strength" value={p.intensity * 100} def={100} min={0} max={150} fmt={(v) => `${Math.round(v)}%`}
                   onChange={(v) => updateParams((c) => ({ ...c, intensity: v / 100 }))} />
@@ -525,17 +532,12 @@ export default function Editor() {
               </div>
 
               <SimplePanel ctx={ctx} ctl={{ strengths: active.strengths ?? {}, setStrength, setLightScene, busy }} />
-
-              <div className="px-4 pt-2 pb-1 text-[10px] uppercase tracking-widest text-zinc-500 border-b border-zinc-800/60">Advanced controls</div>
-              <div className="grid grid-cols-4 border-b border-zinc-800 text-[11px]">
-                {([['looks', 'Looks'], ['grade', 'Colour'], ['masks', 'Masks'], ['curves', 'Curves'], ['dodge', 'Dodge/Burn'], ['effects', 'Effects'], ['info', 'Info']] as const).map(([k, l]) => (
-                  <button key={k} onClick={() => setTab(k)}
-                    className={`py-3 text-[13px] font-medium border-b-2 transition-colors ${tab === k ? 'border-indigo-400 text-white bg-zinc-800/40' : 'border-transparent text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/30'}`}>{l}</button>
-                ))}
-              </div>
+              </>)}
 
               {tab === 'looks' && <LooksPanel key={active.sid} ctx={ctx} />}
-              {tab === 'grade' && <ColourGradingPanel ctx={ctx} />}
+              {tab === 'light' && <ColourGradingPanel ctx={ctx} part="light" />}
+              {tab === 'colour' && <ColourGradingPanel ctx={ctx} part="colour" />}
+              {tab === 'presets' && <RegionPresetsPanel ctx={ctx} onTune={(r) => { setSelRegion(r); setTab('masks'); }} />}
               {tab === 'masks' && <MaskingPanel ctx={ctx} overlay={{ on: maskOverlayOn, setOn: setMaskOverlayOn, selected: selRegion, setSelected: setSelRegion }} maskUI={maskUI} />}
               {tab === 'curves' && <CurvesPanel ctx={ctx} hist={active.histogram} />}
               {tab === 'dodge' && <DodgeBurnPanel ctx={ctx} />}
@@ -564,9 +566,12 @@ export default function Editor() {
                   </p>
                 </Sub>
               )}
+              </div>
             </>
           )}
         </aside>
+        <Rail tab={tab} onTab={setTab} dots={{ masks: ready ? diffCount(p!.regions, auto!.regions) + diffCount(p!.masks, auto!.masks) : 0, curves: ready ? diffCount(p!.tone, auto!.tone) : 0 }} />
+        </div>
       </div>
     </div>
   );

@@ -36,13 +36,13 @@ const chip = (on: boolean) =>
   `px-3 py-1.5 rounded-lg text-[13px] border transition-colors ${on ? 'border-indigo-400 bg-indigo-950 text-indigo-100' : 'border-zinc-700 text-zinc-300 hover:border-zinc-500 hover:bg-zinc-800/60'}`;
 
 // ------------------------------------------------------------------------------------------------ colour grading
-export function ColourGradingPanel({ ctx }: { ctx: EditCtx }) {
+export function ColourGradingPanel({ ctx, part = 'all' }: { ctx: EditCtx; part?: 'all' | 'light' | 'colour' }) {
   const { p, auto } = ctx;
   const [mixColor, setMixColor] = useState('green');
   const on = p.grading_enabled;
   return (
     <>
-      <Sub title="White balance & tone" count={diffCount(p.basic, auto.basic) + (p.wb_mode !== auto.wb_mode ? 1 : 0)}>
+      {part !== 'colour' && <Sub title="White balance & tone" count={diffCount(p.basic, auto.basic) + (p.wb_mode !== auto.wb_mode ? 1 : 0)}>
         <div className="flex flex-wrap gap-1.5 mb-1">
           {ctx.analysis.natural_color.candidates.map((c) => (
             <button key={c} onClick={() => ctx.update((cur) => ({ ...cur, wb_mode: c }), true, true)} className={chip(p.wb_mode === c)}>{WB_LABELS[c] ?? c}</button>
@@ -54,8 +54,9 @@ export function ColourGradingPanel({ ctx }: { ctx: EditCtx }) {
         {TONE.map((d) => <PSlider key={d.key} ctx={ctx} path={['basic', d.key]} def={d} />)}
         <div className="text-[10px] uppercase tracking-widest text-zinc-500 mt-2">Presence</div>
         {PRESENCE.map((d) => <PSlider key={d.key} ctx={ctx} path={['basic', d.key]} def={d} />)}
-      </Sub>
+      </Sub>}
 
+      {part !== 'light' && <>
       <div className="px-4 py-2 border-b border-zinc-800 flex items-center justify-between">
         <Toggle checked={on} onChange={(v) => ctx.set(['grading_enabled'], v, true)} label="HSL, tone curve & colour balance" title="Switch the three tools below on or off without losing their settings" />
       </div>
@@ -97,6 +98,7 @@ export function ColourGradingPanel({ ctx }: { ctx: EditCtx }) {
           ))}
         </Sub>
       </div>
+      </>}
     </>
   );
 }
