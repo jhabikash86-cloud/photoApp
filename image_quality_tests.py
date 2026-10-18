@@ -558,6 +558,33 @@ def t_smart_looks(an, p) -> Result:
         bool(not bad and distinct and monotonic), f"unsafe: {bad or 'none'}; closest pair differs by {min(gaps):.4f}; strength 0/30/70/120% change {d[0]:.3f}/{d[1]:.3f}/{d[2]:.3f}/{d[3]:.3f}"
 
 
+def t_adaptive_looks(an, p) -> Result:
+    """The same look must be parameterised differently for a bright-sky/dark-foreground photo and an evenly lit overcast one."""
+    import look_engine as le
+    A = le.Tonal(rng=0.80, p50=0.38, clip_hi=0.03, sky_med=0.85, sky_clip=0.06, fg_med=0.20, mt_med=0.4, mt_range=0.35)
+    B = le.Tonal(rng=0.38, p50=0.50, clip_hi=0.0, sky_med=0.62, sky_clip=0.0, fg_med=0.50, mt_med=0.5, mt_range=0.10)
+    for t in (A, B):
+        t.gap = le._c((t.sky_med - t.fg_med - 0.12) / 0.35); t.flat = le._c((0.62 - t.rng) / 0.30); t.contrasty = le._c((t.rng - 0.82) / 0.14)
+        t.fg_dark = le._c((0.30 - t.fg_med) / 0.15); t.fg_bright = le._c((t.fg_med - 0.52) / 0.20); t.mt_flat = le._c((0.22 - t.mt_range) / 0.12)
+    feel = le.LOOKS["cinematic"].feel
+    pa = le.adapt_regions(le._region_plan(feel, le.Facts("landscape", "sunny", "mountains")), A)
+    pb = le.adapt_regions(le._region_plan(feel, le.Facts("landscape", "sunny", "mountains")), B)
+    ga, gb = le.global_multipliers(A), le.global_multipliers(B)
+    checks = {
+        "sky is burned harder in A": pa["sky"]["highlights"] < pb["sky"]["highlights"] - 3 and pa["sky"]["exposure"] < pb["sky"]["exposure"],
+        "foreground lifted more in A": pa["foreground"]["shadows"] > pb["foreground"]["shadows"] + 3,
+        "clouds / mountains get more contrast in B": pb["sky"]["contrast"] > pa["sky"]["contrast"] and pb["mountains"]["clarity"] > pa["mountains"]["clarity"] + 3,
+        "global contrast higher in B": gb["contrast"] > ga["contrast"] + 0.5,
+        "highlight recovery stronger in A": ga["highlights"] > gb["highlights"] + 0.5,
+        "adaptive strength stays 0.8..1.2": 0.8 <= le.adaptive_strength(A) <= 1.2 and 0.8 <= le.adaptive_strength(B) <= 1.2,
+    }
+    ta = le.measure_tonal(an)
+    real = 0.0 <= ta.flat <= 1.0 and 0.0 < ta.rng < 1.0 and 0.8 <= le.adaptive_strength(ta) <= 1.2
+    bad = [k for k, v in checks.items() if not v]
+    return "adaptive looks: bright-sky/dark-foreground and flat/overcast photos get different parameters from the same look", \
+        bool(not bad and real), f"failed: {bad or 'none'}; this photo: range {ta.rng:.2f}, flat {ta.flat:.2f}, gap {ta.gap:.2f}, adaptive ×{le.adaptive_strength(ta):.2f}"
+
+
 TESTS: List[Callable] = [
     t_mask_alignment_and_range, t_mask_operations, t_mask_controls, t_local_edit_stays_inside_mask,
     t_db_off_is_identity, t_db_highlights_and_shadows_protected, t_db_preserves_skin_texture, t_db_no_halo,
@@ -565,7 +592,7 @@ TESTS: List[Callable] = [
     t_render_size_matches_image, t_neutral_params_are_identity, t_slider_directions, t_srgb_pipeline, t_light_scene_read,
     t_custom_mask_shapes, t_gradient_and_radial_geometry, t_brush_resolution_independent, t_range_masks_select_what_they_claim,
     t_mask_limit_and_refine, t_custom_mask_edit_stays_inside, t_point_curve,
-    t_region_coverage, t_region_paint_fix, t_lut_behaviour, t_match_reference, t_banded_ops_are_exact, t_smart_looks,
+    t_region_coverage, t_region_paint_fix, t_lut_behaviour, t_match_reference, t_banded_ops_are_exact, t_smart_looks, t_adaptive_looks,
 ]
 
 

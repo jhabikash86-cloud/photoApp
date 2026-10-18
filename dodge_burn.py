@@ -243,7 +243,7 @@ def auto_lighting(arr: np.ndarray, masks: Dict[str, np.ndarray]) -> Tuple[DodgeB
         target = 0.42
         under = target - sy
         if under > 0.03:
-            res.dodge = float(np.clip(under * 267, 0, 50))      # about +1.6 EV per unit of shortfall, capped
+            res.dodge = float(np.clip(under * 267, 0, 50 if _reliable(person, 0.02) else 30))   # about +1.6 EV per unit of shortfall; a landscape foreground is lifted more gently
             res.dodge_tones = float(np.clip(sy * 100, 20, 70))   # act on the tones the subject actually sits in
             notes.append(f"Subject is a little dark (brightness {sy:.2f}) → dodge")
         elif closeup and sy < 0.68:
