@@ -10,6 +10,7 @@ from typing import Dict, Optional
 
 import cv2
 import numpy as np
+from bands import banded
 
 GAMMA = 2.2
 LUMA = np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
@@ -179,6 +180,7 @@ def estimate(rgb: np.ndarray, sky: Optional[np.ndarray] = None, skin: Optional[n
     return res
 
 
+@banded
 def apply_gains(arr: np.ndarray, gains: np.ndarray, temp: float = 0.0, tint: float = 0.0) -> np.ndarray:
     """Apply white-balance gains (plus manual temp/tint) in linear light. Returns a new array."""
     g = np.asarray(gains, np.float32) * temp_tint_gains(temp, tint)
@@ -188,6 +190,7 @@ def apply_gains(arr: np.ndarray, gains: np.ndarray, temp: float = 0.0, tint: flo
     return np.clip(np.power(np.clip(lin, 0, None), 1 / GAMMA), 0, 1)
 
 
+@banded
 def color_balance(arr: np.ndarray, shadows=(0, 0, 0), mids=(0, 0, 0), highs=(0, 0, 0)) -> np.ndarray:
     """Photoshop 'Color Balance'. Per tonal range: (cyan<->red, magenta<->green, yellow<->blue), -100..100.
     Positive = toward red / green / blue; the opposite colour is reduced so brightness stays put."""

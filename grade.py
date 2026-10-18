@@ -12,6 +12,7 @@ import numpy as np
 import colorcal
 import landscape
 from adjust import edge_aware_blur
+from bands import banded
 
 GAMMA = 2.2
 LUMA = np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
@@ -63,6 +64,10 @@ class Ctx:
             return t, A
         return self._get("haze", build)
 
+    def band(self, y0: int, y1: int) -> "Ctx":
+        """Rows y0..y1 of this context, reading the shared fields lazily (nothing is recomputed per band)."""
+        return _BandCtx(self, y0, y1)
+
     def crop(self, box) -> "Ctx":
         """A view of this context limited to box=(y0,y1,x0,x1); heavy fields are computed once, then sliced."""
         y0, y1, x0, x1 = box
@@ -76,9 +81,28 @@ class Ctx:
         return c
 
 
+class _BandCtx(Ctx):
+    def __init__(self, parent: Ctx, y0: int, y1: int):
+        super().__init__(parent.arr[y0:y1])
+        self.edge = parent.edge
+        self._p, self._s = parent, slice(y0, y1)
+        self.exclude = None if parent.exclude is None else parent.exclude[self._s]
+
+    y = property(lambda self: self._p.y[self._s])
+    yb = property(lambda self: self._p.yb[self._s])
+    detail_c = property(lambda self: self._p.detail_c[self._s])
+    detail_t = property(lambda self: self._p.detail_t[self._s])
+
+    @property
+    def haze(self) -> tuple:
+        t, A = self._p.haze
+        return t[self._s], A
+
+
 # ----------------------------------------------------------------------------------------------
 # single operations
 # ----------------------------------------------------------------------------------------------
+@banded
 def exposure(arr: np.ndarray, v: float) -> np.ndarray:
     """+-100 = +-3 EV in linear light, with a soft shoulder so highlights roll off instead of clipping."""
     if not v:
@@ -88,6 +112,7 @@ def exposure(arr: np.ndarray, v: float) -> np.ndarray:
     return np.power(np.clip(lin, 0, 1), 1 / GAMMA)
 
 
+@banded
 def contrast(arr: np.ndarray, v: float) -> np.ndarray:
     if not v:
         return arr
@@ -98,6 +123,7 @@ def contrast(arr: np.ndarray, v: float) -> np.ndarray:
     return np.clip(0.5 + (arr - 0.5) * (1 + 0.75 * k), 0, 1)
 
 
+@banded
 def highlights(arr: np.ndarray, v: float, ctx: Ctx) -> np.ndarray:
     if not v:
         return arr
@@ -110,6 +136,7 @@ def highlights(arr: np.ndarray, v: float, ctx: Ctx) -> np.ndarray:
     return np.clip(out, 0, 1)
 
 
+@banded
 def shadows(arr: np.ndarray, v: float, ctx: Ctx) -> np.ndarray:
     if not v:
         return arr
@@ -118,12 +145,14 @@ def shadows(arr: np.ndarray, v: float, ctx: Ctx) -> np.ndarray:
     return np.clip(arr * scale[..., None], 0, 1)
 
 
+@banded
 def whites(arr: np.ndarray, v: float, ctx: Ctx) -> np.ndarray:
     if not v:
         return arr
     return np.clip(arr + ((v / 100) * 0.22 * smoothstep(0.6, 1.0, ctx.y))[..., None], 0, 1)
 
 
+@banded
 def blacks(arr: np.ndarray, v: float, ctx: Ctx) -> np.ndarray:
     if not v:
         return arr
@@ -142,6 +171,7 @@ def _soft_limit(d: np.ndarray, limit: float) -> np.ndarray:
     return limit * np.tanh(d / limit)
 
 
+@banded
 def clarity(arr: np.ndarray, v: float, ctx: Ctx) -> np.ndarray:
     if not v:
         return arr
@@ -150,6 +180,7 @@ def clarity(arr: np.ndarray, v: float, ctx: Ctx) -> np.ndarray:
     return np.clip(arr + ((v / 100) * 1.8 * d * 4 * y * (1 - y))[..., None], 0, 1)
 
 
+@banded
 def texture(arr: np.ndarray, v: float, ctx: Ctx) -> np.ndarray:
     if not v:
         return arr
@@ -167,6 +198,7 @@ def _gamut_limit(gray: np.ndarray, d: np.ndarray, f: np.ndarray) -> np.ndarray:
     return np.where(f > 1, soft, f)
 
 
+@banded
 def saturation(arr: np.ndarray, v: float) -> np.ndarray:
     if not v:
         return arr
@@ -178,26 +210,36 @@ def saturation(arr: np.ndarray, v: float) -> np.ndarray:
     return np.clip(gray + d * f, 0, 1)
 
 
+def _skin_like(arr: np.ndarray) -> np.ndarray:
+    """Skin-like hues (orange, moderate saturation) get most of a vibrance boost held back. The weight is smooth, so it is
+    computed at a quarter of the size and scaled up (several times cheaper, visually identical)."""
+    h0, w0 = arr.shape[:2]
+    k = 4 if max(h0, w0) > 700 else 1
+    small = cv2.resize(arr, (max(1, w0 // k), max(1, h0 // k)), interpolation=cv2.INTER_AREA) if k > 1 else arr
+    hsv = cv2.cvtColor(small, cv2.COLOR_RGB2HSV)
+    hue_w = np.clip(1 - np.abs(hsv[..., 0] - 25) / 22, 0, 1)
+    sat_w = np.clip((hsv[..., 1] - 0.12) / 0.15, 0, 1) * np.clip((0.7 - hsv[..., 1]) / 0.2, 0, 1)
+    skin_like = (hue_w * sat_w).astype(np.float32)
+    if k > 1:
+        skin_like = cv2.resize(skin_like, (w0, h0), interpolation=cv2.INTER_LINEAR)
+    return skin_like
+
+
 def vibrance(arr: np.ndarray, v: float, protect: Optional[np.ndarray] = None) -> np.ndarray:
     """Lightroom-style vibrance: lifts muted colours much more than already-saturated ones, and holds back
     on skin-tone hues (and on `protect`, e.g. the detected skin) so people don't turn orange."""
     if not v:
         return arr
+    skin_like = _skin_like(arr) if v > 0 else None        # whole-picture field, computed once, then handed to the bands
+    return _vibrance(arr, v, protect, skin_like)
+
+
+@banded
+def _vibrance(arr: np.ndarray, v: float, protect: Optional[np.ndarray], skin_like: Optional[np.ndarray]) -> np.ndarray:
     gray = (arr @ LUMA)[..., None]
     chroma = (arr.max(axis=2) - arr.min(axis=2))[..., None]
     if v > 0:
         f = 1 + (v / 100) * 1.9 * (1 - chroma) ** 1.25
-        # skin-like hues (orange, moderate saturation) get most of the boost held back; the weight is smooth, so it is
-        # computed at a quarter of the size and scaled up (several times cheaper, visually identical)
-        h0, w0 = arr.shape[:2]
-        k = 4 if max(h0, w0) > 700 else 1
-        small = cv2.resize(arr, (max(1, w0 // k), max(1, h0 // k)), interpolation=cv2.INTER_AREA) if k > 1 else arr
-        hsv = cv2.cvtColor(small, cv2.COLOR_RGB2HSV)
-        hue_w = np.clip(1 - np.abs(hsv[..., 0] - 25) / 22, 0, 1)
-        sat_w = np.clip((hsv[..., 1] - 0.12) / 0.15, 0, 1) * np.clip((0.7 - hsv[..., 1]) / 0.2, 0, 1)
-        skin_like = (hue_w * sat_w).astype(np.float32)
-        if k > 1:
-            skin_like = cv2.resize(skin_like, (w0, h0), interpolation=cv2.INTER_LINEAR)
         f = 1 + (f - 1) * (1 - 0.75 * skin_like[..., None])
     else:
         f = 1 + (v / 100) * (0.4 + 0.8 * chroma)
@@ -215,6 +257,7 @@ def temp_tint(arr: np.ndarray, t: float, ti: float = 0.0) -> np.ndarray:
     return colorcal.apply_gains(arr, np.ones(3, np.float32), t, ti)
 
 
+@banded
 def hue_shift(arr: np.ndarray, v: float) -> np.ndarray:
     """+-100 = +-30 degrees around the colour wheel."""
     if not v:
@@ -224,6 +267,7 @@ def hue_shift(arr: np.ndarray, v: float) -> np.ndarray:
     return np.clip(cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB), 0, 1)
 
 
+@banded
 def mixer(arr: np.ndarray, mix: Dict[str, List[float]]) -> np.ndarray:
     """Lightroom's colour mixer: hue, saturation and luminance per colour family."""
     if not mix or not any(any(v) for v in mix.values()):
@@ -250,6 +294,7 @@ def _hue_rgb(h: float) -> np.ndarray:
     return (c - float(c @ LUMA)).astype(np.float32)          # a pure tint: no brightness change
 
 
+@banded
 def apply_wheels(arr: np.ndarray, g, protect: Optional[np.ndarray] = None, protect_sky: Optional[np.ndarray] = None) -> np.ndarray:
     """Colour grading wheels. Each range adds a tint (hue, saturation) and a small luminance shift, weighted by
     where the pixel sits in the tonal range. `protect` (0..1, e.g. skin) shields the mids and highlights tints."""
@@ -318,6 +363,7 @@ def curve_lut(points, size: int = 1024) -> Optional[np.ndarray]:
     return _pchip(xs, ys, np.linspace(0, 1, size)).astype(np.float32)
 
 
+@banded
 def point_curve(arr: np.ndarray, tone) -> np.ndarray:
     """Point tone curves: the master RGB curve first, then the red, green and blue curves."""
     luts = [curve_lut(tone.rgb), curve_lut(tone.r), curve_lut(tone.g), curve_lut(tone.b)]
@@ -334,6 +380,7 @@ def point_curve(arr: np.ndarray, tone) -> np.ndarray:
     return np.clip(out, 0, 1)
 
 
+@banded
 def parametric_curve(arr: np.ndarray, c) -> np.ndarray:
     """Parametric tone curve (Lightroom style). Each slider (-100..100) bends the curve inside one tonal range:
     shadows, darks, lights, highlights. The curve stays monotonic, so it can never invert tones or posterise."""

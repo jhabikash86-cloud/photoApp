@@ -101,13 +101,14 @@ class MaskBank:
         return name in self.names() or name == "hair" and "hair" in self.base
 
     # ------------------------------------------------------------------ plain and derived masks
-    def get(self, name: str, size: tuple) -> Optional[np.ndarray]:
-        """The mask at `size` = (w, h), float32 0..1, or None when it does not exist for this photo."""
+    def get(self, name: str, size: tuple, cache: bool = True) -> Optional[np.ndarray]:
+        """The mask at `size` = (w, h), float32 0..1, or None when it does not exist for this photo.
+        cache=False (full-resolution export) builds it without keeping a gigabyte-sized copy in the bank."""
         key = ("raw", name, size)
         if key in self._cache:
             return self._cache[key]
         m = self._build(name, size)
-        if m is not None:
+        if m is not None and cache and size[0] * size[1] <= 6_000_000:       # previews are cached; huge export-size masks are rebuilt on demand
             self._cache[key] = m
         return m
 

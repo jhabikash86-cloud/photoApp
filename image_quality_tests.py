@@ -493,6 +493,42 @@ def t_match_reference(an, p) -> Result:
     return "match reference: gets closer to the reference, strength blends, sliders stay in a sane range, 0% changes nothing", bool(ok), "; ".join(detail)
 
 
+def t_banded_ops_are_exact(an, p) -> Result:
+    """Large exports run per-pixel operations in parallel row bands. That must change nothing: identical to a single pass."""
+    import bands
+    import colorcal
+    import grade
+    from params import Grading, Wheel
+    big = cv2.resize(an.work, (2400, 1800), interpolation=cv2.INTER_CUBIC).clip(0, 1).astype(np.float32)
+    ctx = grade.Ctx(big)
+    skin = cv2.GaussianBlur((big[..., 0] > 0.6).astype(np.float32), (0, 0), 20)
+    g = Grading(shadows=Wheel(hue=210, sat=30), highs=Wheel(hue=40, sat=25, lum=5))
+    cases = {
+        "exposure": (grade.exposure, (big, 30)), "contrast": (grade.contrast, (big, 40)), "highlights": (grade.highlights, (big, -40, ctx)),
+        "shadows": (grade.shadows, (big, 40, ctx)), "whites": (grade.whites, (big, 20, ctx)), "clarity": (grade.clarity, (big, 40, ctx)),
+        "texture": (grade.texture, (big, 40, ctx)), "saturation": (grade.saturation, (big, 30)), "hue": (grade.hue_shift, (big, 20)),
+        "mixer": (grade.mixer, (big, {"green": [10, 20, -10], "blue": [0, 15, 5]})), "wheels": (grade.apply_wheels, (big, g, skin, skin)),
+        "gains": (colorcal.apply_gains, (big, np.array([1.1, 1.0, 0.9], np.float32), 10, -5)),
+        "balance": (colorcal.color_balance, (big, (10, 0, -10), (0, 5, 0), (-5, 0, 10))),
+        "vibrance": (lambda a, v, pr: grade.vibrance(a, v, pr), (big, 40, skin)),
+    }
+    old = bands.MIN_PIXELS
+    bad = []
+    try:
+        for name, (fn, args) in cases.items():
+            bands.MIN_PIXELS = 10 ** 12
+            ref = fn(*args)
+            bands.MIN_PIXELS = 1
+            got = fn(*args)
+            if not np.array_equal(ref, got):
+                bad.append(f"{name} (max diff {float(np.abs(ref - got).max()):.2e})")
+        noop = grade.exposure(big, 0) is big
+    finally:
+        bands.MIN_PIXELS = old
+    return "banded (parallel) per-pixel operations give exactly the same pixels as a single pass", not bad and noop, \
+        f"{len(cases) - len(bad)}/{len(cases)} identical; no-op returns the input untouched: {noop}" + (f"; DIFFERENT: {bad}" if bad else "")
+
+
 TESTS: List[Callable] = [
     t_mask_alignment_and_range, t_mask_operations, t_mask_controls, t_local_edit_stays_inside_mask,
     t_db_off_is_identity, t_db_highlights_and_shadows_protected, t_db_preserves_skin_texture, t_db_no_halo,
@@ -500,7 +536,7 @@ TESTS: List[Callable] = [
     t_render_size_matches_image, t_neutral_params_are_identity, t_slider_directions, t_srgb_pipeline, t_light_scene_read,
     t_custom_mask_shapes, t_gradient_and_radial_geometry, t_brush_resolution_independent, t_range_masks_select_what_they_claim,
     t_mask_limit_and_refine, t_custom_mask_edit_stays_inside, t_point_curve,
-    t_region_coverage, t_region_paint_fix, t_lut_behaviour, t_match_reference,
+    t_region_coverage, t_region_paint_fix, t_lut_behaviour, t_match_reference, t_banded_ops_are_exact,
 ]
 
 

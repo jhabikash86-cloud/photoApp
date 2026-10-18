@@ -569,8 +569,14 @@ def _target(an: Analysis, edge: Optional[int]):
     return src, (src.shape[1], src.shape[0]), src.shape[1] / W
 
 
-def _masks_at(an: Analysis, size) -> Dict[str, np.ndarray]:
+def _nomemo(an, key, fn):
+    return fn()
+
+
+def _masks_at(an: Analysis, size, keep: bool = True) -> Dict[str, np.ndarray]:
     """Every mask (including derived foreground/background) at `size`, from the shared mask bank."""
+    if not keep:
+        return {n: m for n in an.bank.names() + ["hair"] if (m := an.bank.get(n, size, cache=False)) is not None}
     return _memo(an, ("masks", size), lambda: {n: an.bank.get(n, size) for n in an.bank.names() + ["hair"]
                                                 if an.bank.get(n, size) is not None})
 
@@ -682,9 +688,11 @@ def _render(an: Analysis, p: EditParams, edge: Optional[int], draft: bool) -> ad
     if p.look not in LOOKS:
         raise ValueError(f"Unknown look '{p.look}'. Choose from: {', '.join(LOOKS)}")
     src, size, scale = _target(an, edge)
+    full_res = edge is None
+    _memo = _nomemo if full_res else globals()['_memo']      # a one-off full-size export must not park gigabytes in the session cache
     if an.scene.kind == "screenshot":
         return adjust.to_image(src)
-    m = dict(_masks_at(an, size))
+    m = dict(_masks_at(an, size, keep=not full_res))
     faces = _faces_at(an, scale)
     ck = (edge, size)
     matte = None
@@ -761,6 +769,8 @@ def _render(an: Analysis, p: EditParams, edge: Optional[int], draft: bool) -> ad
                 out = out.copy()
             out[y0:y1, x0:x1] += patch
     out = np.clip(out, 0, 1)
+    if full_res:       # the pre-local-adjustment copies and the shared context fields are finished with: free ~2 GB at 48 MP
+        del arr_g, ctx_g, cb, arr_wb
 
     if p.grading_enabled:
         out = grade.apply_wheels(out, p.grading, m.get("skin"), m.get("sky"))
