@@ -143,7 +143,8 @@ def upload(limit=None):
     print(f"{len(todo)} photos to upload to {_base()}", flush=True)
     t0, sent = time.time(), 0.0
     for n, r in enumerate(todo, 1):
-        src = str(root / r["path"]) if root and (root / r["path"]).exists() else lib.abs_path(r["path"])
+        primary = os.path.join(lib.root(), r["path"])          # read from the original drive when it is plugged in (USB is faster than the Wi-Fi to the NAS)
+        src = primary if os.path.exists(primary) else (str(root / r["path"]) if root else primary)
         ts = (r["taken"] or "2000-01-01 00:00:00").replace(" ", "T")[:19] + ".000Z"
         try:
             status, body = _upload_one(src, f"neural-travel-{r['id']}", ts, ts, _sha1(src))
