@@ -264,7 +264,7 @@ def analyze(path: str, sid: Optional[str] = None) -> Analysis:
     if scene.kind != "screenshot":
         an.meta = metamod.read(path)
         an.read = scene_grade.read(work, mdict.get("sky"), (sem.summary()["shares"] if sem else {}),
-                                   bool(sem and sem.indoor), scene.kind, an.meta)
+                                   bool(sem and sem.indoor), scene.kind, an.meta, mdict)
     an.secs = time.time() - t0
     return an
 

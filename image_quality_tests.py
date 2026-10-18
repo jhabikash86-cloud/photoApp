@@ -529,6 +529,35 @@ def t_banded_ops_are_exact(an, p) -> Result:
         f"{len(cases) - len(bad)}/{len(cases)} identical; no-op returns the input untouched: {noop}" + (f"; DIFFERENT: {bad}" if bad else "")
 
 
+def t_smart_looks(an, p) -> Result:
+    import look_engine
+    base = _render_arr(an, p, 600)
+    size = (base.shape[1], base.shape[0])
+    skin = an.bank.get("skin", size)
+    outs, bad = {}, []
+    for lid, look in look_engine.LOOKS.items():
+        q, notes, facts = look_engine.build(an, p, look, 1.0)
+        r = _render_arr(an, q, 600)
+        outs[lid] = r
+        y = _luma(r)
+        clip = float((r.max(2) > 0.995).mean() - (base.max(2) > 0.995).mean())
+        crush = float((r.max(2) < 0.02).mean() - (base.max(2) < 0.02).mean())
+        med = float(np.median(y))
+        ok = clip < 0.04 and crush < 0.06 and 0.2 < med < 0.7 and bool(notes)
+        if skin is not None and (skin > 0.5).mean() > 0.01:
+            ok = ok and float(np.abs(r[skin > 0.5] - base[skin > 0.5]).mean()) < 0.12
+        if not ok:
+            bad.append(lid)
+    ids = list(outs)
+    gaps = [float(np.abs(outs[a] - outs[b]).mean()) for i, a in enumerate(ids) for b in ids[i + 1:]]
+    distinct = min(gaps) > 0.004
+    look = look_engine.LOOKS["cinematic"]
+    d = [float(np.abs(_render_arr(an, look_engine.build(an, p, look, k)[0], 600) - base).mean()) for k in (0.0, 0.3, 0.7, 1.2)]
+    monotonic = d[0] < 0.004 and d[1] < d[2] and d[3] > 0.8 * d[2]      # 0% leaves the edit as it is; beyond 100% the safety governor may hold the change level
+    return "smart looks: all 8 are safe (no clipping/crushing, believable brightness, skin natural), distinct, and strength scales smoothly", \
+        bool(not bad and distinct and monotonic), f"unsafe: {bad or 'none'}; closest pair differs by {min(gaps):.4f}; strength 0/30/70/120% change {d[0]:.3f}/{d[1]:.3f}/{d[2]:.3f}/{d[3]:.3f}"
+
+
 TESTS: List[Callable] = [
     t_mask_alignment_and_range, t_mask_operations, t_mask_controls, t_local_edit_stays_inside_mask,
     t_db_off_is_identity, t_db_highlights_and_shadows_protected, t_db_preserves_skin_texture, t_db_no_halo,
@@ -536,7 +565,7 @@ TESTS: List[Callable] = [
     t_render_size_matches_image, t_neutral_params_are_identity, t_slider_directions, t_srgb_pipeline, t_light_scene_read,
     t_custom_mask_shapes, t_gradient_and_radial_geometry, t_brush_resolution_independent, t_range_masks_select_what_they_claim,
     t_mask_limit_and_refine, t_custom_mask_edit_stays_inside, t_point_curve,
-    t_region_coverage, t_region_paint_fix, t_lut_behaviour, t_match_reference, t_banded_ops_are_exact,
+    t_region_coverage, t_region_paint_fix, t_lut_behaviour, t_match_reference, t_banded_ops_are_exact, t_smart_looks,
 ]
 
 

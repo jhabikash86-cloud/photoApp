@@ -7,6 +7,8 @@ import { API_URL, EditCtx, Params, newLayer } from '../lib/params';
 
 type LutItem = { id: string; name: string; builtin: boolean };
 type Preset = { id: string; name: string; scopes: string[]; params: Partial<Params> };
+type LookItem = { id: string; label: string; result: string; adjusts: string };
+type LookState = { id: string; k: number; notes: string[]; regions: string[] };
 type MatchState = { refId: string; thumb: string; snap: Params; notes: string[]; strength: number };
 
 export const SCOPES: { id: string; label: string; hint: string; def: boolean }[] = [
@@ -58,6 +60,7 @@ export function merge(cur: Params, saved: Partial<Params>): Params {
 }
 
 let clipboard: Partial<Params> | null = null;                       // Copy / Paste settings between photos
+const lookStore = new Map<string, LookState>();      // chosen look + strength + what it did, per photo
 const matchStore = new Map<string, MatchState>();                   // survives switching tabs
 
 async function getJSON<T>(path: string, body?: unknown, form?: FormData): Promise<T> {
@@ -81,6 +84,10 @@ export default function LooksPanel({ ctx }: { ctx: EditCtx }) {
   const [name, setName] = useState('');
   const [busyMatch, setBusyMatch] = useState(false);
   const [match, setMatch] = useState<MatchState | null>(matchStore.get(sid) ?? null);
+  const [looks, setLooks] = useState<LookItem[]>([]);
+  const [land, setLand] = useState<LookState | null>(lookStore.get(sid) ?? null);
+  const [busyLook, setBusyLook] = useState(false);
+  const lookTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lutFile = useRef<HTMLInputElement>(null);
   const refFile = useRef<HTMLInputElement>(null);
   const matchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -94,11 +101,37 @@ export default function LooksPanel({ ctx }: { ctx: EditCtx }) {
     getJSON<{ previews: Record<string, string> }>('/api/lut_previews', { session_id: sid, params: pRef.current })
       .then((d) => setPreviews(d.previews)).catch(() => {}).finally(() => setLoadingPrev(false));
   }, [sid]);
-  useEffect(() => { loadLuts(); loadPresets(); Promise.resolve().then(refreshPreviews); }, [loadLuts, loadPresets, refreshPreviews]);
+  useEffect(() => { loadLuts(); loadPresets(); Promise.resolve().then(refreshPreviews); getJSON<{ looks: LookItem[] }>('/api/looks').then((d) => setLooks(d.looks)).catch(() => {}); }, [loadLuts, loadPresets, refreshPreviews]);
 
   const setMatchState = (m: MatchState | null) => { if (m) matchStore.set(sid, m); else matchStore.delete(sid); setMatch(m); };
   const toggleScope = (id: string) => setScopes((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
   const lut = p.lut ?? { id: null, intensity: 100 };
+
+  // ---------------------------------------------------------------- scene-aware looks (the server reads the photo and builds the edit)
+  const setLandState = (v: LookState | null) => { if (v) lookStore.set(sid, v); else lookStore.delete(sid); setLand(v); };
+  const runLook = useCallback(async (id: string, k: number) => {
+    setBusyLook(true);
+    try {
+      const gr = ctx.analysis.grade;
+      const d = await getJSON<{ params: Params; notes: string[]; facts: { regions: string[] } }>('/api/look', { session_id: sid, look_id: id, params: pRef.current, strength: Math.round(k * 100), light: gr?.light, scene: gr?.scene });
+      ctx.update(() => d.params, true, true);
+      setLandState({ id, k, notes: d.notes, regions: d.facts.regions });
+    } catch (e) { ctx.flash(e instanceof Error ? e.message : 'Could not apply that look'); }
+    finally { setBusyLook(false); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sid, ctx]);
+  const onLookStrength = (v: number) => {
+    if (!land) return;
+    setLandState({ ...land, k: v / 100 });
+    if (lookTimer.current) clearTimeout(lookTimer.current);
+    lookTimer.current = setTimeout(() => runLook(land.id, v / 100), 260);
+  };
+  const backToAuto = () => {
+    ctx.update((c) => ({ ...c, basic: { ...ctx.auto.basic, temperature: c.basic.temperature, tint: c.basic.tint }, grading: ctx.auto.grading, mixer: ctx.auto.mixer,
+      curve: ctx.auto.curve, dodge_burn: ctx.auto.dodge_burn, regions: Object.fromEntries(Object.entries(c.regions).map(([n, r]) => [n, { ...ctx.auto.regions[n], strokes: r.strokes }])) as Params['regions'],
+      effects: { ...c.effects, vignette: ctx.auto.effects.vignette } }), true, true);
+    setLandState(null);
+  };
 
   // ---------------------------------------------------------------- LUTs
   const pickLut = (id: string | null) => ctx.update((c) => ({ ...c, lut: { id, intensity: c.lut?.intensity ?? 100 } }), true, true);
@@ -172,6 +205,34 @@ export default function LooksPanel({ ctx }: { ctx: EditCtx }) {
 
   return (
     <>
+      <Sub title="Smart looks">
+        <p className="text-[11px] leading-relaxed text-zinc-500">One click reads the photo (light, scene, every region) and builds the edit: a colour grade, a different adjustment for each region (sky, mountains, water, trees, foreground; skin protected) and the lighting. Everything stays editable.</p>
+        <div className="grid grid-cols-2 gap-1.5">
+          {looks.map((pr) => (
+            <button key={pr.id} disabled={busyLook} title={`${pr.result} · ${pr.adjusts}`} onClick={() => runLook(pr.id, land?.k ?? 1)}
+              className={`rounded-lg border px-2.5 py-2.5 text-left transition-colors disabled:opacity-60 ${land?.id === pr.id ? 'border-indigo-400 bg-indigo-950 text-indigo-100' : 'border-zinc-700 text-zinc-200 hover:border-zinc-500 hover:bg-zinc-800/60'}`}>
+              <div className="text-[12.5px] font-medium leading-tight">{pr.label}</div>
+              <div className="mt-0.5 text-[10.5px] leading-snug text-zinc-400">{pr.result}</div>
+            </button>
+          ))}
+        </div>
+        {busyLook && <p className="text-[11px] text-zinc-500">Reading the photo and building the edit…</p>}
+        {land && (
+          <>
+            <Slider label="Look strength" value={land.k * 100} min={0} max={150} def={100} fmt={(v) => `${Math.round(v)}%`} onChange={onLookStrength} />
+            {land.regions.length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {land.regions.map((r) => (
+                  <span key={r} className="rounded-full border border-zinc-700 px-2 py-0.5 text-[10.5px] text-zinc-300">{r === 'other' ? 'Miscellaneous' : r}</span>
+                ))}
+              </div>
+            )}
+            <ul className="list-disc space-y-1 pl-4 text-[11px] leading-snug text-zinc-400">{land.notes.map((n, i) => <li key={i}>{n}</li>)}</ul>
+            <button onClick={backToAuto} className={`${chip(false)} w-full`}>Back to the automatic grade</button>
+          </>
+        )}
+      </Sub>
+
       <Sub title="Match a reference">
         <p className="text-[11px] text-zinc-500 leading-relaxed">
           Pick a photo whose look you like (a film still, a Lightroom export, another of your edits). The app measures its brightness, colour cast and colour intensity and sets your sliders to match, so you can still fine-tune every one.

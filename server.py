@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 import adjust
 import engine
+import look_engine
 import luts
 import match
 import immich
@@ -536,3 +537,31 @@ def match_reference(req: MatchRequest):
             an.cache[key] = m
     out = match.blend(req.params, m.full, req.strength / 100.0)
     return {"params": out.model_dump(), "notes": m.notes}
+
+
+# ---------------------------------------------------------------------------------------------
+# Scene-aware looks
+# ---------------------------------------------------------------------------------------------
+@app.get("/api/looks")
+def looks_list():
+    return {"looks": look_engine.list_looks()}
+
+
+class LookRequest(BaseModel):
+    session_id: str
+    look_id: str
+    params: EditParams            # the current sliders (white balance, people, masks and effects are kept)
+    strength: float = 100         # percent, 0..150
+    light: Optional[str] = None
+    scene: Optional[str] = None
+
+
+@app.post("/api/look")
+def apply_look(req: LookRequest):
+    an = _session(req.session_id)
+    look = look_engine.LOOKS.get(req.look_id)
+    if look is None:
+        raise HTTPException(404, "Unknown look.")
+    with LOCKS[req.session_id]:
+        p, notes, facts = look_engine.build(an, req.params, look, req.strength / 100.0, req.light, req.scene)
+    return {"params": p.model_dump(), "notes": notes, "facts": facts}

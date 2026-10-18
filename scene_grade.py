@@ -136,7 +136,7 @@ def read_light(work: np.ndarray, sky: Optional[np.ndarray], indoor: bool, meta) 
     return best, conf, sc, ev
 
 
-def read_scene(shares: Dict[str, float], work: np.ndarray, indoor: bool, kind: str) -> Tuple[str, float, List[str]]:
+def read_scene(shares: Dict[str, float], work: np.ndarray, indoor: bool, kind: str, masks: Optional[Dict[str, np.ndarray]] = None) -> Tuple[str, float, List[str]]:
     """Classify the place from what the segmentation model found (shares are percent of the frame)."""
     g = lambda k: shares.get(k, 0.0) / 100.0
     sky, trees, grass, water, mount, build, ground = (g(k) for k in ("sky", "trees", "grass", "water", "mountains", "buildings", "ground"))
@@ -144,7 +144,23 @@ def read_scene(shares: Dict[str, float], work: np.ndarray, indoor: bool, kind: s
     s = min(1.0, 400 / max(work.shape[:2]))
     a = cv2.resize(work, None, fx=s, fy=s, interpolation=cv2.INTER_AREA) if s < 1 else work
     hsv = cv2.cvtColor(a, cv2.COLOR_RGB2HSV)
-    snowish = float(((a @ LUMA > 0.72) & (hsv[..., 1] < 0.14))[a.shape[0] // 4:].mean())
+    bright = (a @ LUMA > 0.72) & (hsv[..., 1] < 0.14)
+    if masks is not None and "mountains" in masks:
+        # snow lies on mountains / ground: a pale grey sky or a white shirt is not snow
+        def at(k):
+            m = masks.get(k)
+            return None if m is None else cv2.resize(np.asarray(m, np.float32), (a.shape[1], a.shape[0]), interpolation=cv2.INTER_AREA)
+        land = at("mountains")
+        if at("ground") is not None:
+            land = np.maximum(land, at("ground"))
+        keep = land > 0.5
+        for k in ("sky", "person"):
+            if at(k) is not None:
+                keep &= at(k) < 0.3
+        snowish = float((bright & keep).sum()) / max(1.0, float((land > 0.5).sum())) * float(keep.mean() * 4 if keep.mean() < 0.25 else 1.0)
+        snowish = float(min(snowish, 1.0)) * (1.0 if keep.mean() > 0.04 else 0.0)
+    else:
+        snowish = float(bright[a.shape[0] // 4:].mean())
     sc = {
         "mountain_lake": 2.2 * min(mount, 0.35) + 1.8 * min(water, 0.4) if (mount > 0.06 and water > 0.08) else 0.0,
         "mountains": 2.4 * mount if mount > 0.10 else 0.0,
@@ -166,9 +182,9 @@ def read_scene(shares: Dict[str, float], work: np.ndarray, indoor: bool, kind: s
     return best, conf, ev
 
 
-def read(work: np.ndarray, sky: Optional[np.ndarray], shares: Dict[str, float], indoor: bool, kind: str, meta) -> SceneRead:
+def read(work: np.ndarray, sky: Optional[np.ndarray], shares: Dict[str, float], indoor: bool, kind: str, meta, masks: Optional[Dict[str, np.ndarray]] = None) -> SceneRead:
     light, lc, scores, ev = read_light(work, sky, indoor, meta)
-    scene, scn, ev2 = read_scene(shares, work, indoor, kind)
+    scene, scn, ev2 = read_scene(shares, work, indoor, kind, masks)
     return SceneRead(light=light, light_conf=lc, light_scores=scores, scene=scene, scene_conf=scn, evidence=ev + ev2,
                      sun_elevation=getattr(meta, "sun_elevation", None))
 
