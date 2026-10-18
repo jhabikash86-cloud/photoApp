@@ -249,7 +249,7 @@ def adapt_regions(plan: Dict[str, Dict[str, float]], t: Tonal) -> Dict[str, Dict
 
 def adaptive_notes(t: Tonal, k_adapt: float) -> List[str]:
     n: List[str] = []
-    if t.gap > 0.25:
+    if t.gap > 0.45:
         n.append(f"Bright sky over a darker foreground (gap {t.sky_med - t.fg_med:.2f}) → sky burned harder, foreground lifted more")
     if t.sky_clip > 0.02:
         n.append(f"{t.sky_clip * 100:.0f}% of the sky is near-white → extra highlight recovery there")
