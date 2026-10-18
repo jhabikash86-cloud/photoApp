@@ -1,3 +1,5 @@
+import hashlib
+import json
 import os
 import threading
 import uuid
@@ -700,3 +702,55 @@ def library_file(pid: int):
     if not os.path.exists(path):
         raise HTTPException(404, "The external drive is not connected.")
     return FileResponse(path, filename=os.path.basename(path))
+
+
+# ---------------------------------------------------------------------------------------------
+# Autosaved edits: every photo reopens exactly as it was left (survives a refresh or a server restart)
+# ---------------------------------------------------------------------------------------------
+EDIT_DIR = Path("edits")
+EDIT_DIR.mkdir(exist_ok=True)
+
+
+def _edit_file(name: str, size: int) -> Path:
+    key = hashlib.sha1(f"{name}|{size}".encode()).hexdigest()[:24]
+    return EDIT_DIR / f"{key}.json"
+
+
+@app.get("/api/edit")
+def edit_load(name: str, size: int):
+    f = _edit_file(name, size)
+    if not f.exists():
+        raise HTTPException(404, "No saved edit.")
+    try:
+        d = json.loads(f.read_text())
+        EditParams(**d["params"])                  # an edit saved by an older version of the app must still be valid
+    except Exception:
+        raise HTTPException(404, "No usable saved edit.")
+    return d
+
+
+class EditSave(BaseModel):
+    name: str
+    size: int
+    params: EditParams
+
+
+@app.post("/api/edit")
+def edit_save(req: EditSave):
+    import time
+    f = _edit_file(req.name, req.size)
+    tmp = f.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"name": req.name, "size": req.size, "saved": time.time(), "params": req.params.model_dump()}))
+    os.replace(tmp, f)
+    return {"ok": True}
+
+
+class EditKey(BaseModel):
+    name: str
+    size: int
+
+
+@app.post("/api/edit/delete")
+def edit_delete(req: EditKey):
+    _edit_file(req.name, req.size).unlink(missing_ok=True)
+    return {"ok": True}

@@ -59,5 +59,40 @@ else:
     except OSError:
         pass
     print(f"  INFO  drive is {'WRITABLE' if not ro else 'read-only'}; this project only ever reads from it")
+# ---- autosaved edits and the backup
+import json
+import shutil
+import sqlite3
+import tempfile
+from pathlib import Path
+
+import backup_library
+import server
+from params import EditParams
+
+name, size = "__test_photo__.nef", 123456
+p = EditParams()
+p.basic.exposure = 17.5
+p.sky_replace.id = "some_sky"
+server.edit_save(server.EditSave(name=name, size=size, params=p))
+back = server.edit_load(name, size)
+check("an autosaved edit comes back exactly", back["params"]["basic"]["exposure"] == 17.5 and back["params"]["sky_replace"]["id"] == "some_sky")
+f = server._edit_file(name, size)
+f.write_text(json.dumps({"name": name, "size": size, "params": {"basic": {"exposure": "not a number"}}}))
+try:
+    server.edit_load(name, size)
+    check("a broken / outdated saved edit is ignored, not loaded", False)
+except Exception:
+    check("a broken / outdated saved edit is ignored, not loaded", True)
+server.edit_delete(server.EditKey(name=name, size=size))
+check("a saved edit can be deleted", not f.exists())
+if lib.DB_PATH.exists():
+    tmp = Path(tempfile.mkdtemp())
+    backup_library.backup(tmp)
+    a = sqlite3.connect(lib.DB_PATH).execute("SELECT COUNT(*) FROM photos").fetchone()[0]
+    b = sqlite3.connect(tmp / "library" / "library.db").execute("SELECT COUNT(*) FROM photos").fetchone()[0]
+    rows = sum(1 for _ in open(tmp / "albums_manifest.csv")) - 1
+    check("backup is complete and readable without the app", a == b == rows and (tmp / "library" / "thumbs").exists(), f"{a} photos in database, backup and spreadsheet")
+    shutil.rmtree(tmp, ignore_errors=True)
 print("\nALL PASSED" if not fails else f"\nFAILED: {fails}")
 sys.exit(1 if fails else 0)

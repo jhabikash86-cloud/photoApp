@@ -120,6 +120,30 @@ def reapply_paths(db):
     print(f"re-applied folder rules; {gone} non-travel photos dropped", flush=True)
 
 
+def apply_place_rules(db):
+    """Country / place for photos whose folder does not say where they were taken, from library/place_rules.json: time windows that were
+    identified by looking at the photos (landmarks, signs). Each rule carries a confidence so doubtful ones can be reviewed."""
+    f = lib.LIB_DIR / "place_rules.json"
+    cols = {r[1] for r in db.execute("PRAGMA table_info(photos)")}
+    if "loc_conf" not in cols:
+        db.execute("ALTER TABLE photos ADD COLUMN loc_conf TEXT")
+    db.execute("UPDATE photos SET loc_conf=NULL")
+    if not f.exists():
+        return
+    n = 0
+    for rule in json.loads(f.read_text()):
+        cur = db.execute("UPDATE photos SET country=?, group_name=?, place=?, loc_conf=? WHERE (country LIKE 'To confirm%' OR country='Unsorted') AND taken BETWEEN ? AND ?",
+                         (rule["country"], rule.get("group", "Europe"), rule["place"], rule.get("conf", "medium"), rule["from"] + ":00", rule["to"] + ":59"))
+        n += cur.rowcount
+    db.commit()
+    # an edited export that matches a RAW takes the RAW's country and place
+    db.execute("""UPDATE photos SET country=(SELECT country FROM photos r WHERE r.id=photos.raw_id), group_name=(SELECT group_name FROM photos r WHERE r.id=photos.raw_id),
+                  place=(SELECT place FROM photos r WHERE r.id=photos.raw_id), loc_conf=(SELECT loc_conf FROM photos r WHERE r.id=photos.raw_id)
+                  WHERE raw_id IS NOT NULL AND country='Unsorted' AND (SELECT country FROM photos r WHERE r.id=photos.raw_id)!='Unsorted'""")
+    db.commit()
+    print(f"place rules placed {n} photos", flush=True)
+
+
 def organise(db):
     reapply_paths(db)
     """Everything derived from stage A: edited vs plain JPEG, RAW pairs, duplicates, countries of loose photos."""
@@ -183,6 +207,7 @@ def organise(db):
                 c = hits[0]
         db.execute("UPDATE photos SET country=? , place=CASE WHEN place='' THEN '(by date)' ELSE place END WHERE id=?", (c or "Unsorted", r["id"]))
     db.commit()
+    apply_place_rules(db)
     print(f"organised: {dups} duplicates, {len(loose)} loose photos placed by date/name", flush=True)
 
 

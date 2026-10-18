@@ -192,16 +192,24 @@ export default function Editor() {
         patch(id, { status: 'ready', analysis: an.analysis, regions: an.regions, auto: an.params, neutral: an.neutral, originalUrl: an.original_url });
         scheduleRender(id, get()!.params!, true);
       } else {
+        // a photo that was edited before reopens exactly as it was left
+        let restored: Params | null = null;
+        try {
+          const r = await fetch(`${API_URL}/api/edit?name=${encodeURIComponent(item.file.name)}&size=${item.file.size}`);
+          if (r.ok) restored = (await r.json()).params as Params;
+        } catch { /* no saved edit */ }
+        const start = restored ?? an.params;
         patch(id, {
-          status: 'ready', params: an.params, auto: an.params, neutral: an.neutral, autoOn: true, history: [an.params], hIndex: 0, analysis: an.analysis,
+          status: 'ready', params: start, auto: an.params, neutral: an.neutral, autoOn: true, history: [start], hIndex: 0, analysis: an.analysis,
           regions: an.regions, originalUrl: an.original_url, previewUrl: (renderMap.current.set(`${API_URL}${an.preview_url}`, an.params), `${API_URL}${an.preview_url}`), histogram: an.histogram,
         });
         setSelRegion((r) => (an.regions.includes(r) ? r : an.regions[0] ?? 'sky'));
+        if (restored) { scheduleRender(id, restored, true); flash('Restored your previous edit of this photo'); }
       }
     } catch (e) {
       patch(id, { status: 'error', error: e instanceof Error ? e.message : 'Failed' });
     }
-  }, [patch, scheduleRender]);
+  }, [flash, patch, scheduleRender]);
   useEffect(() => { processRef.current = (id, keep) => { processItem(id, keep); }; }, [processItem]);
 
   const openFiles = useCallback((files: FileList | File[]) => {
@@ -213,6 +221,17 @@ export default function Editor() {
     itemsRef.current = [...itemsRef.current, ...fresh];
     fresh.forEach((it) => { queue.current = queue.current.then(() => processItem(it.id)); });
   }, [flash, processItem]);
+
+  // autosave: the sliders of every photo are saved on the server shortly after each change, so it reopens exactly as it was left
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const persistEdit = useCallback((id: string) => {
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      const it = itemsRef.current.find((i) => i.id === id);
+      if (!it?.params || it.status !== 'ready') return;
+      fetch(`${API_URL}/api/edit`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: it.file.name, size: it.file.size, params: it.params }) }).catch(() => {});
+    }, 900);
+  }, []);
 
   const commitHistory = useCallback((id: string) => {
     setItems((all) => all.map((i) => {
@@ -231,9 +250,10 @@ export default function Editor() {
     patch(id, keepStrengths ? { params: next } : { params: next, strengths: undefined });
     itemsRef.current = itemsRef.current.map((i) => (i.id === id ? { ...i, params: next, ...(keepStrengths ? {} : { strengths: undefined }) } : i));
     scheduleRender(id, next, immediate);
+    persistEdit(id);
     if (commitTimer.current) clearTimeout(commitTimer.current);
     if (commitNow) commitHistory(id); else commitTimer.current = setTimeout(() => commitHistory(id), 600);
-  }, [commitHistory, patch, scheduleRender]);
+  }, [commitHistory, patch, persistEdit, scheduleRender]);
 
   const step = useCallback((dir: -1 | 1) => {
     const id = activeRef.current;
@@ -248,8 +268,9 @@ export default function Editor() {
       patch(id, { hIndex: idx, params: it.history[idx] });
       itemsRef.current = itemsRef.current.map((i) => (i.id === id ? { ...i, hIndex: idx, params: it.history[idx] } : i));
       scheduleRender(id, it.history[idx], true);
+      persistEdit(id);
     }, 0);
-  }, [commitHistory, patch, scheduleRender]);
+  }, [commitHistory, patch, persistEdit, scheduleRender]);
 
   const applyLook = async (look: string) => {
     if (!active?.sid || !active.params) return;
