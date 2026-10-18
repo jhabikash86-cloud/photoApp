@@ -1,0 +1,12 @@
+fastapi==0.143.0
+uvicorn==0.54.0
+python-multipart==0.0.32
+pydantic==2.14.1
+python-dotenv==1.2.4
+numpy==2.5.4
+pillow==12.3.0
+opencv-python-headless==5.0.0.93
+mediapipe==1.1.0
+pillow-heif==1.8.1
+onnxruntime==1.31.0
+rawpy==0.27.1

@@ -1,0 +1,17 @@
+.env
+venv/
+__pycache__/
+temp_uploads/
+.DS_Store
+outputs/
+test_sheets/
+models/
+node_modules/
+.next/
+*.tsbuildinfo
+presets/
+luts/
+*.log
+source.jpg
+target.jpg
+masterpiece.jpg
