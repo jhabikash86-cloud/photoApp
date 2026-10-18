@@ -105,6 +105,21 @@ class ToneCurve(BaseModel):
     b: List[List[float]] = [[0.0, 0.0], [1.0, 1.0]]
 
 
+class SkyReplace(BaseModel):
+    """Replace the sky with one from the sky library, matched to the photo. Everything adaptive is decided when the sky is chosen
+    (see sky_replace.plan) and stored here, so the render itself is cheap and every number stays editable."""
+    id: Optional[str] = None                          # library sky (file name without .jpg); None = off
+    blend: float = Field(100, ge=0, le=100)           # 0 = original sky, 100 = fully replaced
+    azimuth: float = Field(0, ge=-180, le=180)        # turn the panorama left / right (degrees): moves the clouds and the sun
+    lift: float = Field(0, ge=-30, le=40)             # look higher / lower in the panorama (degrees of camera pitch)
+    zoom: float = Field(100, ge=50, le=200)           # 100 = the photo's field of view; larger = bigger clouds
+    exposure: float = Field(0, ge=-100, le=100)       # brightness of the new sky (auto-matched when chosen)
+    horizon: float = Field(40, ge=0, le=100)          # blend of the original horizon haze into the new sky
+    relight: float = Field(50, ge=0, le=100)          # how much the landscape takes on the new sky's colour and light
+    reflect: float = Field(60, ge=0, le=100)          # how much water takes on the new sky's colour (reflections)
+    edge: float = Field(50, ge=0, le=100)             # edge cleanup against trees / hills (decontamination)
+
+
 class LutSetting(BaseModel):
     """A creative 3D LUT (built-in or imported .cube) and how strongly it is applied."""
     id: Optional[str] = None                      # "builtin:teal_orange", "user:my_look", or None for no LUT
@@ -202,6 +217,7 @@ class EditParams(BaseModel):
     tone: ToneCurve = ToneCurve()
     masks: List[MaskLayer] = []
     lut: LutSetting = LutSetting()
+    sky_replace: SkyReplace = SkyReplace()
     grading: Grading = Grading()
     grading_enabled: bool = True                  # HSL mixer + colour balance + curve
 

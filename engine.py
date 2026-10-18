@@ -22,6 +22,7 @@ import colorcal
 import custom_masks
 import denoise
 import luts
+import sky_replace
 import depth as depthmod
 import dodge_burn
 import grade
@@ -581,10 +582,11 @@ def _masks_at(an: Analysis, size, keep: bool = True) -> Dict[str, np.ndarray]:
                                                 if an.bank.get(n, size) is not None})
 
 
-def region_mask(an: Analysis, name: str, size, src: np.ndarray, r) -> Optional[np.ndarray]:
+def region_mask(an: Analysis, name: str, size, src: np.ndarray, r, base: Optional[np.ndarray] = None) -> Optional[np.ndarray]:
     """An automatic region as the user wants it: the detected mask, corrected by any paint strokes (add area / remove
     area), then shaped by the region's own invert, feather, edge-refine and strength controls."""
-    base = an.bank.get(name, size)
+    if base is None:
+        base = an.bank.get(name, size)
     if base is None:
         return None
     if getattr(r, "strokes", None):
@@ -693,11 +695,19 @@ def _render(an: Analysis, p: EditParams, edge: Optional[int], draft: bool) -> ad
     if an.scene.kind == "screenshot":
         return adjust.to_image(src)
     m = dict(_masks_at(an, size, keep=not full_res))
+    src0 = src                                                     # the untouched original: 'Edit strength' blends back to this
+    sr = p.sky_replace
+    sky_override = None
+    if sr.id and sr.blend > 0 and "sky" in m:
+        rep = _memo(an, ("skyrep", _js(sr), size), lambda: sky_replace.apply(an, src, m, sr))
+        if rep[1] is not None:
+            src, sky_override = rep
+            m["sky"] = sky_override                               # later stages follow the cleaned sky edge
     faces = _faces_at(an, scale)
-    ck = (edge, size)
+    ck = (edge, size) + ((_js(sr),) if sky_override is not None else ())     # every cached stage depends on which sky is in the picture
     matte = None
     if "person" in m:   # a proper matte at THIS resolution: clean edges, hair-aware, no speckle
-        matte = _memo(an, ("matte", size), lambda: matting.refine_alpha(src, m["person"], m.get("hair")))
+        matte = _memo(an, ("matte", size) + ck[2:], lambda: matting.refine_alpha(src, m["person"], m.get("hair")))
         m["person"] = matte[0]
 
     # 1. white balance
@@ -734,8 +744,8 @@ def _render(an: Analysis, p: EditParams, edge: Optional[int], draft: bool) -> ad
         if r is None or not r.enabled or not an.bank.has(name):
             continue
         strength = an.reports[name].strength if name in an.reports else 1.0
-        eff = _memo(an, ("rmask", name, _js(r.model_dump(include={'strokes', 'mask_strength', 'feather', 'refine', 'invert'}))) + ck,
-                    lambda: region_mask(an, name, size, src, r))
+        eff = _memo(an, ("rmask", name, _js(r.model_dump(include={'strokes', 'mask_strength', 'feather', 'refine', 'invert'})), _js(sr) if (name == "sky" and sky_override is not None) else "") + ck,
+                    lambda: region_mask(an, name, size, src, r, sky_override if name == "sky" else None))
         if eff is None:
             continue
         if name == "sky" and not r.invert:   # a real sky deepens toward the top and stays light near the horizon
@@ -818,7 +828,7 @@ def _render(an: Analysis, p: EditParams, edge: Optional[int], draft: bool) -> ad
     if not draft:
         out = grade.grain(out, e.grain)
 
-    result = np.clip(src + (np.clip(out, 0, 1) - src) * p.intensity, 0, 1)
+    result = np.clip(src0 + (np.clip(out, 0, 1) - src0) * p.intensity, 0, 1)
     img = adjust.to_image(result)
     return img if draft else adjust.sharpen_image(img, e.sharpen * min(1.0, p.intensity))
 

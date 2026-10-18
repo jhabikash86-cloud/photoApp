@@ -615,6 +615,80 @@ def t_sky_studio(an, p) -> Result:
         bool(not bad and zero < 0.004 and ok_rank), f"sky is '{r.kind}'; unsafe: {bad or 'none'}; 0% change {zero:.4f}; top treatment {top['id']} ({top['fit']}); looks {[l['id'] for l in sg['looks']]}"
 
 
+def t_sky_replacement(an, p) -> Result:
+    import look_engine as le
+    import sky_replace as sr
+    if not sr.library():
+        return "sky replacement (library not downloaded)", True, "skipped"
+    info = sr.need(an)
+    if not info["available"]:
+        return "sky replacement: photos without a sky are declined cleanly", True, "no sky in this photo"
+    facts = le.read_facts(an, None, None)
+    ranked = sr.rank(an, facts.light, le.measure_tonal(an))
+    ok_rank = len(ranked) >= 40 and all(0 <= r["fit"] <= 1 for r in ranked) and ranked == sorted(ranked, key=lambda r: -r["fit"])
+    bucket = sr.LIGHT_BUCKET.get(facts.light, "day")
+    ok_rank = ok_rank and sr.TIME_BUCKET[ranked[0]["time"]] == bucket and ranked[-1]["fit"] < 0.3
+    src, size, _ = engine._target(an, 900)
+    masks = engine._masks_at(an, size)
+    sky = masks["sky"]
+    good = ranked[0]["id"]
+    plan = sr.plan(an, good)
+    out, m = sr.apply(an, src, masks, plan)
+    d = np.abs(out - src).max(axis=2)
+    inside = float(d[sky > 0.8].mean())
+    land = (m < 0.02) & (sky < 0.02)
+    # far from the sky and water, only the gentle relight may touch the landscape
+    far = cv2.erode(land.astype(np.uint8), np.ones((25, 25), np.uint8)).astype(bool)
+    water = masks.get("water")
+    if water is not None:
+        far &= water < 0.05
+    gentle = float(d[far].mean()) < 0.045 and float(d[far].max()) < 0.2
+    p0 = plan.model_copy(update={"relight": 0, "reflect": 0, "edge": 0})
+    out0, _ = sr.apply(an, src, masks, p0)
+    far0 = cv2.erode(((m < 0.02) & (sky < 0.02)).astype(np.uint8), np.ones((25, 25), np.uint8)).astype(bool)
+    untouched = float(np.abs(out0 - src).max(axis=2)[far0].max()) < 1e-6
+    off, _ = sr.apply(an, src, masks, plan.model_copy(update={"blend": 0}))
+    identity = off is src
+    # resolution independence: the same sky at 600 px and 1200 px agree
+    s2, size2, _ = engine._target(an, 1200)
+    m2 = engine._masks_at(an, size2)
+    o2, _ = sr.apply(an, s2, m2, plan)
+    a = cv2.resize(out, (size2[0], size2[1]), interpolation=cv2.INTER_CUBIC)
+    corr = float(np.corrcoef((a @ LUMA).ravel(), (o2 @ LUMA).ravel())[0, 1])
+    # the whole engine: the replacement is part of the render and Edit strength 0 returns the original
+    q = p.model_copy(deep=True)
+    q.sky_replace = plan
+    q.intensity = 0.0
+    zero = float(np.abs(_render_arr(an, q, 600) - engine._target(an, 600)[0]).max())
+    checks = {"sky replaced": inside > 0.03, "landscape only gently relit": gentle, "relight/reflect/edge off leaves landscape exact": untouched,
+              "0% blend is a no-op": identity, "same at two sizes": corr > 0.97, "edit strength 0 = original": zero < 0.01, "ranking sane": ok_rank}
+    bad = [k for k, v in checks.items() if not v]
+    return "sky replacement: only the sky changes (plus a gentle relight), no-op at 0%, resolution independent, library ranked by fit", not bad, \
+        f"{'all hold' if not bad else 'FAILED: ' + str(bad)}; sky change {inside:.2f}, corr {corr:.3f}; best sky '{good}' for light '{facts.light}'"
+
+
+def t_sky_full_res_matte(an, p) -> Result:
+    """The full-resolution sky matte must recover a sharp skyline from a blocky low-resolution mask."""
+    import sky_replace as sr
+    H, W = 1800, 3000
+    xs = np.arange(W)
+    ridge = (700 + 80 * np.sin(xs / 260.0) + 30 * np.sin(xs / 61.0)).astype(np.int32)          # true skyline, per column
+    yy = np.arange(H)[:, None]
+    truth = (yy < ridge[None, :]).astype(np.float32)                                          # 1 = sky
+    rng = np.random.default_rng(3)
+    sky_col = np.stack([0.45 + 0.2 * yy / H, 0.62 + 0.15 * yy / H, 0.85 - 0.05 * yy / H], axis=-1) * np.ones((1, W, 1))
+    land_col = np.array([0.18, 0.28, 0.14])[None, None, :] * np.ones((H, W, 1))
+    img = (truth[..., None] * sky_col + (1 - truth[..., None]) * land_col + rng.normal(0, 0.012, (H, W, 3))).astype(np.float32).clip(0, 1)
+    # a low-resolution (1/12) model output, blown back up: blocky edges
+    small = cv2.resize(truth, (W // 12, H // 12), interpolation=cv2.INTER_AREA)
+    blocky = cv2.resize(small, (W, H), interpolation=cv2.INTER_NEAREST).astype(np.float32)
+    fixed = sr._colour_matte(img, blocky.copy(), int(ridge.max() + 120))
+    err0 = float(np.abs(blocky - truth).mean())
+    err1 = float(np.abs(fixed - truth).mean())
+    return "sky matte: a blocky low-resolution mask is rebuilt into a sharp skyline at full resolution", err1 < 0.5 * err0 and err1 < 0.004, \
+        f"mean edge error {err0:.4f} -> {err1:.4f}"
+
+
 TESTS: List[Callable] = [
     t_mask_alignment_and_range, t_mask_operations, t_mask_controls, t_local_edit_stays_inside_mask,
     t_db_off_is_identity, t_db_highlights_and_shadows_protected, t_db_preserves_skin_texture, t_db_no_halo,
@@ -622,7 +696,7 @@ TESTS: List[Callable] = [
     t_render_size_matches_image, t_neutral_params_are_identity, t_slider_directions, t_srgb_pipeline, t_light_scene_read,
     t_custom_mask_shapes, t_gradient_and_radial_geometry, t_brush_resolution_independent, t_range_masks_select_what_they_claim,
     t_mask_limit_and_refine, t_custom_mask_edit_stays_inside, t_point_curve,
-    t_region_coverage, t_region_paint_fix, t_lut_behaviour, t_match_reference, t_banded_ops_are_exact, t_smart_looks, t_adaptive_looks, t_sky_studio,
+    t_region_coverage, t_region_paint_fix, t_lut_behaviour, t_match_reference, t_banded_ops_are_exact, t_smart_looks, t_adaptive_looks, t_sky_studio, t_sky_replacement, t_sky_full_res_matte,
 ]
 
 

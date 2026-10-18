@@ -19,6 +19,7 @@ import engine
 import look_engine
 import luts
 import sky_engine
+import sky_replace
 import match
 import immich
 from engine import Analysis
@@ -56,6 +57,8 @@ def _cleanup_loop():
 
 app = FastAPI()
 app.mount("/outputs", StaticFiles(directory=OUTPUT_DIR), name="outputs")
+sky_replace.CACHE.mkdir(parents=True, exist_ok=True)
+app.mount("/sky_thumbs", StaticFiles(directory=sky_replace.CACHE), name="sky_thumbs")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000"],
@@ -604,3 +607,40 @@ def apply_sky(req: SkyRequest):
         except ValueError as e:
             raise HTTPException(400, str(e))
     return {"params": p.model_dump(), "notes": notes, "sky": sky}
+
+
+# ---------------------------------------------------------------------------------------------
+# Sky replacement (skies from the local CC0 library)
+# ---------------------------------------------------------------------------------------------
+@app.get("/api/skies/{sid}")
+def skies_for(sid: str):
+    """Is a new sky worth it for this photo, and the library skies ranked by how well they suit its light."""
+    an = _session(sid)
+    import look_engine
+    with LOCKS[sid]:
+        info = sky_replace.need(an)
+        if not sky_replace.library():
+            return {**info, "available": False, "reason": "The sky library is not downloaded (run fetch_skies.py).", "skies": []}
+        facts = look_engine.read_facts(an, None, None)
+        ranked = sky_replace.rank(an, facts.light, look_engine.measure_tonal(an))
+    for r in ranked:
+        sky_replace.thumb_path(r["id"])
+        r["thumb"] = f"/sky_thumbs/{r['id']}_thumb.jpg"
+    return {**info, "light": facts.light, "skies": ranked}
+
+
+class SkyPlanRequest(BaseModel):
+    session_id: str
+    sky_id: str
+
+
+@app.post("/api/sky_plan")
+def sky_plan(req: SkyPlanRequest):
+    """Make the adaptive decisions for putting this library sky into this photo (composition, brightness, haze, relight)."""
+    an = _session(req.session_id)
+    with LOCKS[req.session_id]:
+        try:
+            sr = sky_replace.plan(an, req.sky_id)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+    return {"sky_replace": sr.model_dump()}

@@ -9,3 +9,7 @@ Local, free (no per-photo API cost) photo editor: FastAPI backend (`server.py`) 
 4. Put the models in `models/` (not in git, ~220 MB): `face_landmarker.task`, `selfie_multiclass.tflite`,
    `segformer_b2_ade.onnx` + `segformer_ade_config.json`, `depth_anything_v2_small.onnx` + `_preprocessor.json`.
 5. `./start.sh` (backend :8000, frontend :3000). Tests: `./venv/bin/python image_quality_tests.py <photos>`.
+
+## Sky library (optional)
+`./venv/bin/python fetch_skies.py` downloads the free CC0 "Pure Skies" panoramas from Poly Haven (59 files, ~1 GB) into `skies/` (not in git).
+They power Sky tab -> "Replace the sky". Safe to re-run; finished files are skipped.

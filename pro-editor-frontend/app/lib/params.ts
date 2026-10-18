@@ -77,6 +77,10 @@ export type Params = {
   grading: Grading;
   grading_enabled: boolean;
   lut?: { id: string | null; intensity: number };
+  sky_replace?: SkyReplace;
+};
+export type SkyReplace = {
+  id: string | null; blend: number; azimuth: number; lift: number; zoom: number; exposure: number; horizon: number; relight: number; reflect: number; edge: number;
 };
 
 export type MaskInfo = { score: number; passed: boolean; chosen: string; tries: string[]; note: string };
