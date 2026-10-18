@@ -27,6 +27,16 @@ check("mixed card-dump folder is split correctly", c("EuropeTrip/Italy/D750/Eiff
       and c("EuropeTrip/Italy/D750/2018-01-15/DSC_1.NEF")[0].startswith("To confirm") and c("EuropeTrip/Italy/2017-12-15/DSC_1.NEF")[0] == "Italy")
 check("personal / non-travel folders are excluded", all(c(p) is None for p in ["EuropeTrip/Baby'sPhotos/IMG_1.jpg", "Uk Trip/InstaForBaby/x.jpg", "EuropeTrip/Italy/Puppy/Oreo/x.jpg",
                                                                          "EuropeTrip/Europe_Videos/2017-09-20/x.jpg", "Bikashji Photos$Downloads/Singapore/Jeffrey_Event/x.jpg"]))
+# ---- fallback to the second copy
+import tempfile as _tf
+_a, _b = _tf.mkdtemp(), _tf.mkdtemp()
+os.makedirs(os.path.join(_b, "Trip"))
+open(os.path.join(_b, "Trip", "x.nef"), "w").write("copy")
+check("a photo is found on the second copy when the primary drive is missing",
+      lib.resolve("Trip/x.nef", [_a, _b]) == os.path.join(_b, "Trip", "x.nef") and lib.resolve("Trip/none.nef", [_a, _b]) == os.path.join(_a, "Trip", "none.nef"))
+open(os.path.join(_a, "Trip.tmp"), "w").close()
+os.makedirs(os.path.join(_a, "Trip"), exist_ok=True); open(os.path.join(_a, "Trip", "x.nef"), "w").write("primary")
+check("the primary drive is preferred when both exist", lib.resolve("Trip/x.nef", [_a, _b]) == os.path.join(_a, "Trip", "x.nef"))
 # ---- the catalog
 if not lib.DB_PATH.exists():
     print("  (no catalog yet: run build_library.py meta)")

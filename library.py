@@ -64,12 +64,32 @@ def root() -> str:
     return r["v"] if r else DEFAULT_ROOT
 
 
+def mirror_root() -> Optional[str]:
+    """Where the second copy of the photos lives (the NAS), once mirror_library.py has been run."""
+    r = connect().execute("SELECT v FROM meta WHERE k='mirror_root'").fetchone()
+    return r["v"] if r else None
+
+
+def resolve(rel: str, roots: List[str]) -> str:
+    """The first existing copy of a photo among `roots` (primary drive first); the primary path if none is reachable."""
+    for r in roots:
+        p = os.path.join(r, rel)
+        if os.path.exists(p):
+            return p
+    return os.path.join(roots[0], rel)
+
+
+def _roots() -> List[str]:
+    m = mirror_root()
+    return [root()] + ([m] if m else [])
+
+
 def abs_path(rel: str) -> str:
-    return os.path.join(root(), rel)
+    return resolve(rel, _roots())
 
 
 def drive_connected() -> bool:
-    return os.path.isdir(root())
+    return any(os.path.isdir(r) for r in _roots())
 
 
 # ------------------------------------------------------------------------------------------------ folder rules
