@@ -467,7 +467,7 @@ export default function Editor() {
   const shownAfter = ready ? afterUrl : active?.quick ? `${API_URL}${active.quick}` : undefined;
 
   return (
-    <div className="h-screen flex flex-col bg-[#1c1c1f] text-zinc-200 text-sm overflow-hidden"
+    <div className="h-dvh md:h-screen flex flex-col bg-[#1c1c1f] text-zinc-200 text-sm overflow-hidden"
       onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
       onDragLeave={(e) => { if (e.currentTarget === e.target) setDragging(false); }}
       onDrop={(e) => { e.preventDefault(); setDragging(false); if (e.dataTransfer.files.length) openFiles(e.dataTransfer.files); }}>
@@ -475,12 +475,12 @@ export default function Editor() {
         onChange={(e) => { if (e.target.files) openFiles(e.target.files); e.target.value = ''; }} />
 
       {/* top bar */}
-      <header className="h-14 shrink-0 flex items-center gap-3 px-4 border-b border-zinc-800 bg-[#18181b]">
-        <span className="font-black tracking-tight text-indigo-400">⚡ NEURAL EDIT PRO</span>
+      <header className="min-h-12 md:h-14 shrink-0 flex items-center gap-2 md:gap-3 px-2 md:px-4 py-1.5 md:py-0 border-b border-zinc-800 bg-[#18181b] overflow-x-auto whitespace-nowrap [&>button]:shrink-0">
+        <span className="font-black tracking-tight text-indigo-400 hidden sm:inline shrink-0">⚡ NEURAL EDIT PRO</span>
         <button onClick={() => fileInput.current?.click()} className="px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-[13px]">Open photos…</button>
         <button onClick={() => setLibraryOpen(true)} title="Browse the travel photo albums from the external drive" className="px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-[13px]">Library…</button>
         <button onClick={() => setBatchOpen(true)} title="Edit a whole Immich album" className="px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-[13px]">Batch (Immich)…</button>
-        <span className="text-xs text-zinc-500 truncate max-w-[260px]">{active ? `${active.name}${active.megapixels ? ` · ${active.megapixels} MP` : ''}${active.raw ? ' · RAW' : ''}` : ''}</span>
+        <span className="text-xs text-zinc-500 truncate max-w-[260px] hidden lg:inline">{active ? `${active.name}${active.megapixels ? ` · ${active.megapixels} MP` : ''}${active.raw ? ' · RAW' : ''}` : ''}</span>
         <div className="flex-1" />
         {ready && (
           <>
@@ -500,9 +500,9 @@ export default function Editor() {
 
       {batchOpen && <BatchDialog onClose={() => setBatchOpen(false)} />}
       {libraryOpen && <LibraryDialog onClose={() => setLibraryOpen(false)} onOpen={(files) => openFiles(files)} />}
-      <div className="flex flex-1 min-h-0">
+      <div className="flex flex-col md:flex-row flex-1 min-h-0">
         {/* canvas + filmstrip */}
-        <div className="flex-1 min-w-0 flex flex-col relative">
+        <div className="h-[40%] md:h-auto shrink-0 md:shrink md:flex-1 min-w-0 flex flex-col relative">
           <Canvas key={active?.id ?? 'none'} beforeUrl={beforeUrl} afterUrl={shownAfter} overlayUrl={customOverlayUrl ?? maskOverlayUrl ?? overlayUrl} clipUrl={clipUrl} toolActive={toolActive}
             tool={toolLayer ? (geo) => (
               <MaskOverlay layer={toolLayer} geo={geo} brush={brush} picking={picking} onPicked={() => setPicking(false)}
@@ -536,8 +536,8 @@ export default function Editor() {
         </div>
 
         {/* right: tool panel + icon rail */}
-        <div className="flex shrink-0">
-        <aside className="w-[372px] shrink-0 bg-[#1f1f23] flex flex-col min-h-0">
+        <div className="flex flex-col-reverse md:flex-row flex-1 md:flex-none md:shrink-0 min-h-0">
+        <aside className="w-full md:w-[372px] flex-1 md:flex-none md:shrink-0 bg-[#1f1f23] flex flex-col min-h-0">
           {!ctx && <p className="p-5 text-xs text-zinc-500">Open a photo to start. Every slider is a real adjustment, set by Auto and ready to move.</p>}
           {ctx && p && auto && active && (
             <>

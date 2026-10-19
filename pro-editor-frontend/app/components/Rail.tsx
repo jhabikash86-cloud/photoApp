@@ -24,12 +24,12 @@ export const RAIL: { id: TabId; label: string; icon: ReactNode }[] = [
 /** Vertical icon rail (like Lightroom): click an icon, its list of actions opens beside it. */
 export default function Rail({ tab, onTab, dots }: { tab: TabId; onTab: (t: TabId) => void; dots?: Partial<Record<TabId, number>> }) {
   return (
-    <nav className="flex w-[72px] shrink-0 flex-col items-center gap-1 overflow-y-auto border-l border-zinc-800 bg-[#18181b] py-3" aria-label="Edit tools">
+    <nav className="flex md:w-[72px] shrink-0 flex-row md:flex-col items-center gap-1 overflow-x-auto md:overflow-x-visible md:overflow-y-auto border-t md:border-t-0 md:border-l border-zinc-800 bg-[#18181b] px-2 md:px-0 py-1.5 md:py-3" aria-label="Edit tools">
       {RAIL.map((r) => {
         const on = tab === r.id;
         return (
           <button key={r.id} onClick={() => onTab(r.id)} title={r.label} aria-label={r.label} aria-pressed={on}
-            className={`relative flex w-14 flex-col items-center gap-1 rounded-xl py-2 transition-colors ${on ? 'bg-zinc-100 text-zinc-900' : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100'}`}>
+            className={`relative flex w-14 shrink-0 flex-col items-center gap-1 rounded-xl py-2 transition-colors ${on ? 'bg-zinc-100 text-zinc-900' : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100'}`}>
             {r.icon}
             <span className="text-[10.5px] font-medium leading-none">{r.label}</span>
             {!!dots?.[r.id] && <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-amber-400" title="Changed by hand" />}

@@ -769,6 +769,24 @@ def t_drama_looks(an, p) -> Result:
         f"{len(looks)} looks, top: {ids[:3]}; unsafe: {bad or 'none'}; closest pair differs {min(gaps):.3f}; strength 0 changes {z:.3f}"
 
 
+def t_white_level_and_look_scale(an, p) -> Result:
+    """Auto must not dull the picture (the brightest tones keep the original's level), and a Drama look must look the same at preview and export size."""
+    import cv2
+    import drama_looks as dl
+    from params import EditParams
+    q0 = float(np.percentile(_luma(_render_arr(an, EditParams(), 700)), 99.5))
+    q1 = float(np.percentile(_luma(_render_arr(an, p, 700)), 99.5))
+    whites_ok = q1 >= min(q0, 0.97) - 0.12
+    ids = [l["id"] for l in dl.generate(an)]
+    q, _, _ = dl.build(an, p, ids[0], 1.0)
+    small = _render_arr(an, q, 320)
+    big = _render_arr(an, q, 960)
+    big_s = cv2.resize(big, (small.shape[1], small.shape[0]), interpolation=cv2.INTER_AREA)
+    diff = float(np.abs(small - big_s).mean())
+    return "whites kept after Auto; Drama looks the same at preview and export size", bool(whites_ok and diff < 0.045), \
+        f"brightest tone original {q0:.2f} -> auto {q1:.2f}; look 320px vs 960px differs by {diff:.3f}"
+
+
 TESTS: List[Callable] = [
     t_mask_alignment_and_range, t_mask_operations, t_mask_controls, t_local_edit_stays_inside_mask,
     t_db_off_is_identity, t_db_highlights_and_shadows_protected, t_db_preserves_skin_texture, t_db_no_halo,
@@ -776,7 +794,7 @@ TESTS: List[Callable] = [
     t_render_size_matches_image, t_neutral_params_are_identity, t_slider_directions, t_srgb_pipeline, t_light_scene_read,
     t_custom_mask_shapes, t_gradient_and_radial_geometry, t_brush_resolution_independent, t_range_masks_select_what_they_claim,
     t_mask_limit_and_refine, t_custom_mask_edit_stays_inside, t_point_curve,
-    t_region_coverage, t_region_paint_fix, t_lut_behaviour, t_match_reference, t_banded_ops_are_exact, t_smart_looks, t_adaptive_looks, t_sky_studio, t_sky_replacement, t_sky_full_res_matte, t_drama_operations, t_drama_looks,
+    t_region_coverage, t_region_paint_fix, t_lut_behaviour, t_match_reference, t_banded_ops_are_exact, t_smart_looks, t_adaptive_looks, t_sky_studio, t_sky_replacement, t_sky_full_res_matte, t_drama_operations, t_drama_looks, t_white_level_and_look_scale,
 ]
 
 
