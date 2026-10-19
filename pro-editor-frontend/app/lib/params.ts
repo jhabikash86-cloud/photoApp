@@ -83,7 +83,7 @@ export type Params = {
 export type DramaSettings = {
   enabled: boolean; amount: number; mood: number; sh_hue: number; sh_chroma: number; mid_hue: number; mid_chroma: number; hi_hue: number; hi_chroma: number;
   protect: number; enrich: number; skin_safe: boolean; sky_burn: number; sky_texture: number; sky_colour: number; sky_hue: number; sky_chroma: number;
-  bloom: number; bloom_hue: number; mist: number; depth_haze: number; mist_y: number; white: number; detail: number; name: string;
+  bloom: number; bloom_hue: number; mist: number; depth_haze: number; mist_y: number; glow: number; rays: number; sun_x: number; sun_y: number; white: number; detail: number; name: string;
 };
 export type SkyReplace = {
   id: string | null; blend: number; azimuth: number; lift: number; zoom: number; exposure: number; horizon: number; relight: number; reflect: number; edge: number;

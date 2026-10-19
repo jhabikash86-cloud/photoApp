@@ -15,6 +15,7 @@ from typing import Dict, List, Optional, Tuple
 import cv2
 import numpy as np
 
+import drama
 import engine
 import look_engine
 from look_engine import Feel, Look
@@ -45,6 +46,8 @@ class Scene:
     flat: float = 0.0
     low_key: float = 0.0
     median: float = 0.45
+    sun_xy: Tuple[float, float] = (-1.0, -1.0)
+    sun: float = 0.0                     # 1 if a sun / lamp is found
     white: float = 0.0                   # brightest level of the ORIGINAL picture (99.5th percentile of luminance)
     chroma: float = 0.0
     snow: float = 0.0                    # share of bright, near-neutral pixels (snow, white cloud, pale rock)
@@ -119,6 +122,10 @@ def _read_scene(an) -> Scene:
     s.low_key = float(np.clip((0.40 - q[1]) / 0.25, 0, 1))
     s.median = float(q[1])
     src, _, _ = engine._target(an, 480)
+    src = np.asarray(src, np.float32)
+    sp = drama._find_sun(src)                       # found in the ORIGINAL (the standard preview already has its highlights pulled down)
+    s.sun = 1.0 if sp is not None else 0.0
+    s.sun_xy = (sp[0] / src.shape[1], sp[1] / src.shape[0]) if sp is not None else (-1.0, -1.0)
     s.white = float(np.percentile(np.asarray(src, np.float32)[::2, ::2] @ LUMA, 99.5))
     return s
 
@@ -146,41 +153,43 @@ class Variant:
     sky_hue: float = 60
     sky_chroma: float = 0
     depth_haze: float = 25
+    glow: float = 30
+    rays: float = 0
 
 
 # global style knobs, tuned against real pro before/after pairs (see tune_drama.py)
-TUNE = dict(white=1.0, hl=0.5, vib=0.0, con=0.0, chroma=1.0, enrich=1.0, burn=0.6, mist=0.6, bloom=1.0, expo=1.0, lift=0.0)
+TUNE = dict(white=1.0, hl=0.5, vib=0.0, con=0.0, chroma=1.3, enrich=1.3, burn=0.6, mist=0.6, bloom=1.0, expo=1.0, lift=0.0)
 
 VARIANTS: Dict[str, Variant] = {v.id: v for v in [
     Variant("blue_hour", "Blue Hour Drama", "Cold, cohesive blue; dark brooding sky; mist on the horizon",
             ((275, 14), (273, 24), (268, 20)), 255, Feel(-0.4, 0.8, 0.8, 0.0, 0.3),
-            dict(contrast=8, highlights=-26, shadows=6, blacks=-4, whites=-4, exposure=-6), -40, sky_burn=75, sky_texture=60, mist=55, bloom=18, enrich=15, sky_hue=272, sky_chroma=26, sky_colour=55),
+            dict(contrast=8, highlights=-26, shadows=6, blacks=-4, whites=-4, exposure=-6), -40, sky_burn=75, sky_texture=60, mist=55, bloom=18, enrich=15, sky_hue=272, sky_chroma=26, sky_colour=55, glow=15, rays=0),
     Variant("golden_glow", "Golden Glow", "Warm amber poured over everything, glowing light, lush greens kept",
             ((60, 12), (72, 28), (78, 34)), 72, Feel(0.9, 0.4, 0.6, 0.6, 0.5),
-            dict(contrast=10, highlights=-22, shadows=10, blacks=-8, whites=2, exposure=-3), -30, sky_burn=45, sky_texture=40, mist=28, bloom=70, protect=70, enrich=35, sky_hue=62, sky_chroma=30, sky_colour=55),
+            dict(contrast=10, highlights=-22, shadows=10, blacks=-8, whites=2, exposure=-3), -30, sky_burn=45, sky_texture=40, mist=28, bloom=70, protect=70, enrich=35, sky_hue=62, sky_chroma=30, sky_colour=55, glow=75, rays=55),
     Variant("teal_orange", "Teal & Orange", "Cinematic complementary pair: teal shadows, warm highlights",
             ((225, 14), (60, 10), (62, 30)), 65, Feel(0.3, 0.5, 0.7, 0.3, 0.4),
-            dict(contrast=14, highlights=-18, shadows=8, blacks=-10, whites=0, exposure=-3), -30, mood=80, protect=65, sky_burn=50, bloom=35, mist=25, enrich=30),
+            dict(contrast=14, highlights=-18, shadows=8, blacks=-10, whites=0, exposure=-3), -30, mood=80, protect=65, sky_burn=50, bloom=35, mist=25, enrich=30, glow=45, rays=28),
     Variant("fiery_sky", "Fiery Sky", "Orange and magenta sky with a violet-cool foreground",
             ((300, 16), (25, 26), (55, 34)), 50, Feel(0.8, 0.8, 0.7, 0.5, 0.3),
-            dict(contrast=14, highlights=-30, shadows=8, blacks=-10, whites=-2, exposure=-6), -34, sky_burn=60, sky_texture=60, sky_colour=85, bloom=60, mist=30, enrich=30, sky_hue=30, sky_chroma=34),
+            dict(contrast=14, highlights=-30, shadows=8, blacks=-10, whites=-2, exposure=-6), -34, sky_burn=60, sky_texture=60, sky_colour=85, bloom=60, mist=30, enrich=30, sky_hue=30, sky_chroma=34, glow=60, rays=38),
     Variant("moody_silver", "Moody Silver", "Dark, desaturated cool grey; heavy vignette; quiet drama",
             ((268, 8), (268, 8), (262, 6)), 250, Feel(-0.2, 1.0, 0.8, -0.5, 0.0),
-            dict(contrast=18, highlights=-24, shadows=0, blacks=-10, whites=-6, exposure=-12), -46, mood=75, protect=40, sky_burn=70, sky_texture=60, mist=40, bloom=10, enrich=-10),
+            dict(contrast=18, highlights=-24, shadows=0, blacks=-10, whites=-6, exposure=-12), -46, mood=75, protect=40, sky_burn=70, sky_texture=60, mist=40, bloom=10, enrich=-10, glow=0, rays=0),
     Variant("pastel_dawn", "Pastel Dawn", "Soft pink-lilac light over teal shadows, lifted and airy",
             ((215, 10), (335, 10), (10, 14)), 5, Feel(0.3, 0.1, 0.2, -0.2, 0.6),
-            dict(contrast=2, highlights=-14, shadows=12, blacks=6, whites=-4, exposure=0), -18, mood=70, protect=55, sky_burn=30, sky_texture=35, sky_colour=55, bloom=45, mist=45, enrich=10, detail=35),
+            dict(contrast=2, highlights=-14, shadows=12, blacks=6, whites=-4, exposure=0), -18, mood=70, protect=55, sky_burn=30, sky_texture=35, sky_colour=55, bloom=45, mist=45, enrich=10, detail=35, glow=40, rays=15),
     Variant("emerald_mist", "Emerald Mist", "Deep green-gold forest light with a hint of fog",
             ((190, 12), (125, 18), (92, 26)), 90, Feel(0.4, 0.5, 0.7, 0.5, 0.4),
-            dict(contrast=10, highlights=-20, shadows=10, blacks=-6, whites=0, exposure=-4), -32, mood=75, protect=75, sky_burn=45, bloom=40, mist=60, enrich=35),
+            dict(contrast=10, highlights=-20, shadows=10, blacks=-6, whites=0, exposure=-4), -32, mood=75, protect=75, sky_burn=45, bloom=40, mist=60, enrich=35, glow=35, rays=22),
     Variant("alpine_blue", "Alpine Blue", "Deep blue sky and shadows with clouds that keep their drama; warm glowing foreground",
             ((290, 14), (282, 20), (275, 8)), 255, Feel(-0.1, 0.7, 0.9, 0.4, 0.5),
             dict(contrast=10, highlights=-24, shadows=10, blacks=-8, whites=-2, exposure=-6), -28, mood=75, protect=65, enrich=45, sky_burn=45, sky_texture=80, bloom=25, mist=15,
-            sky_hue=278, sky_chroma=28, sky_colour=70),
+            sky_hue=278, sky_chroma=28, sky_colour=70, glow=20, rays=10),
     Variant("lush_valley", "Lush Valley", "Vivid layered greens under a warm orange sky, haze deepening the distance",
             ((130, 16), (118, 30), (92, 30)), 70, Feel(0.6, 0.4, 0.9, 0.9, 0.3),
             dict(contrast=8, highlights=-20, shadows=10, blacks=-8, whites=-2, exposure=-6), -22, mood=55, protect=90, enrich=60, sky_burn=35, sky_texture=45, bloom=45, mist=45, detail=75,
-            sky_hue=58, sky_chroma=36, sky_colour=85),
+            sky_hue=58, sky_chroma=36, sky_colour=85, glow=45, rays=28),
 ]}
 
 
@@ -250,7 +259,10 @@ def score(v: Variant, s: Scene) -> Tuple[float, str]:
     elif v.id == "lush_valley":
         if fol > 0.3 and s.warm > 0.3: add(0.3, "green land under warm light")
         if s.depth_range > 0.45 or s.haze > 0.2: add(0.18, "layers of distance and haze")
+        if fol < 0.1: sc -= 0.35                                      # 'lush' needs real green
         if lt in ("sunset", "golden_hour"): add(0.15, "warm low light")
+    if s.sun > 0.5 and v.id in ('golden_glow', 'fiery_sky', 'teal_orange', 'lush_valley'):
+        add({'golden_glow': 0.3, 'fiery_sky': 0.12, 'teal_orange': 0.1, 'lush_valley': 0.1}[v.id], 'a sun to build the light around')
     if v.id == "golden_glow" and s.bright_source > 0.4 and s.low_key > 0.3: add(0.22, "a bright sun in a dark scene")
     if s.people:
         sc -= 0.04
@@ -285,6 +297,8 @@ def _adapt(v: Variant, s: Scene) -> Dict[str, float]:
         vignette=v.vignette * (0.55 if s.people else 1.0),
         detail=v.detail * (1.0 + 0.5 * s.flat),
         enrich=v.enrich,
+        glow=v.glow * max(float(np.clip((s.bright_source - 0.2) / 0.5, 0, 1)), 0.8 * s.sun),
+        rays=v.rays * max(float(np.clip((s.bright_source - 0.3) / 0.4, 0, 1)), 0.8 * s.sun),
     )
     if s.people:
         out["mood"] *= 0.75
@@ -312,6 +326,8 @@ def build(an, base: EditParams, vid: str, strength: float = 1.0) -> Tuple[EditPa
         basic["highlights"] = basic.get("highlights", 0.0) * 0.6
     look = Look(id=f"drama_{v.id}", label=v.label, result=v.blurb, adjusts=v.blurb, feel=feel, basic=basic, wheels={}, mixer={}, curve={}, vignette=a["vignette"])
     p, lnotes, facts = look_engine.build(an, base, look, strength)
+    p.basic.highlights = max(p.basic.highlights, -26.0)      # a gentler, more basic starting point: Drama and the white anchor do the light, the sliders do not crush it
+    p.basic.shadows = min(p.basic.shadows, 26.0)
     p.wb_mode = "asshot"                                   # keep the capture's mood: neutralising it is what makes skies grey
     p.basic.temperature = 0.0
     p.basic.tint = 0.0
@@ -329,13 +345,15 @@ def build(an, base: EditParams, vid: str, strength: float = 1.0) -> Tuple[EditPa
     d.sky_burn, d.sky_texture, d.sky_colour = a["sky_burn"] * TUNE['burn'] * (1.0 - 0.8 * s.bright_source), a["sky_texture"], a["sky_colour"]
     d.bloom, d.bloom_hue, d.mist, d.mist_y, d.detail = a["bloom"] * TUNE['bloom'], v.bloom_hue, a["mist"] * TUNE['mist'], -1.0, a["detail"]
     d.depth_haze = a["depth_haze"]
+    d.glow, d.rays = a['glow'], a['rays']
+    d.sun_x, d.sun_y = s.sun_xy
     d.white = float(np.clip(s.white, 0.0, 0.97)) * TUNE['white'] if s.white > 0.6 else 0.0
     # step 4: stronger local contrast and dehaze, through the ordinary (halo-guarded) Basic controls
     dk = a["detail"] / 55.0 * min(k, 1.2)
     p.basic.dehaze += (16 + 40 * s.haze) * dk
     p.basic.clarity += 14 * dk
     p.basic.texture += 10 * dk
-    p.basic.vibrance += TUNE['vib']
+    p.basic.vibrance += TUNE['vib'] + 16.0 * float(np.clip((s.neutral - 0.3) / 0.4, 0, 1))      # a grey scene needs a real colour push (pro edits carry 2-4x the colour)
     p.basic.contrast += TUNE['con']
     p.basic.shadows += TUNE['lift']
     notes.append(f"{v.label}: {v.blurb}")

@@ -129,6 +129,10 @@ class Drama(BaseModel):
     bloom_hue: float = Field(70, ge=0, le=360)
     mist: float = Field(30, ge=0, le=100)              # luminous haze on the horizon + atmospheric depth
     depth_haze: float = Field(25, ge=0, le=100)        # atmospheric depth: far ground sinks into haze (turned down automatically in already-hazy scenes)
+    glow: float = Field(0, ge=0, le=100)               # warm glow radiating from a sun / lamp (only if one is found)
+    rays: float = Field(0, ge=0, le=100)               # soft light rays from the same source
+    sun_x: float = Field(-1, ge=-1, le=1)              # where the light is (fraction of width / height); -1 = none found
+    sun_y: float = Field(-1, ge=-1, le=1)
     white: float = Field(0, ge=0, le=1)                # light anchor: the brightest tones are restored toward this level (the photo's own brightness), 0 = off
     mist_y: float = Field(-1, ge=-1, le=1)             # where the haze lies (fraction of height); -1 = find the horizon automatically
     detail: float = Field(50, ge=0, le=100)            # recorded here so the look can be re-applied; the sliders live in Basic

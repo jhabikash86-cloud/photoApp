@@ -127,6 +127,10 @@ def _sky(arr: np.ndarray, sky: np.ndarray, d: Drama, k: float, targets: np.ndarr
         y = (out @ LUMA).astype(np.float32)
         core = cv2.erode((sky0 > 0.5).astype(np.uint8), cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * r + 1, 2 * r + 1))).astype(np.float32)
         core = cv2.GaussianBlur(core, (0, 0), r / 2.0)                          # texture only well inside the sky, never at the skyline
+        k5 = np.ones((5, 5), np.uint8)
+        busy = ((cv2.dilate(y, k5) - cv2.erode(y, k5)) > 0.16).astype(np.uint8)  # twigs, wires, leaf edges: strong local contrast, not clouds
+        busy = cv2.GaussianBlur(cv2.dilate(busy, np.ones((9, 9), np.uint8)).astype(np.float32), (0, 0), 2.5)
+        core = core * (1.0 - np.clip(busy * 1.4, 0, 1))
         sm = (sky0 > 0.5).astype(np.float32)
 
         def smooth(sig):                                                        # blur that only looks at SKY pixels (a dark hill must not read as a cloud edge)
@@ -149,6 +153,78 @@ def _sky(arr: np.ndarray, sky: np.ndarray, d: Drama, k: float, targets: np.ndarr
 
 
 # ------------------------------------------------------------------------------------------------ light
+def _find_sun(arr: np.ndarray):
+    """(cx, cy) in pixels of the sun / a lamp, or None. The light is the blown-out (clipped) mass of the ORIGINAL picture (leaf gaps merged): a
+    compact one is the light itself; a large one (sun inside a blown sky) has the light at its lowest part, where it meets the horizon or trees."""
+    h, w = arr.shape[:2]
+    s = min(1.0, 360 / max(h, w))
+    small = cv2.resize(arr, (max(1, int(w * s)), max(1, int(h * s))), interpolation=cv2.INTER_AREA) if s < 1 else arr
+    y = (small @ LUMA).astype(np.float32)
+    blown = (y >= 0.97).astype(np.float32)
+    e = max(y.shape)
+    merged = (cv2.GaussianBlur(blown, (0, 0), 0.025 * e) > 0.30).astype(np.uint8)       # leaf gaps and twigs do not split the light
+    n, lab, st, cen = cv2.connectedComponentsWithStats(merged)
+    best, area = None, 0.0
+    for i in range(1, n):
+        a = st[i, cv2.CC_STAT_AREA] / merged.size
+        if 0.0006 < a < 0.30 and a > area and float(blown[lab == i].sum()) > 0.004 * merged.size:
+            best, area = i, a
+    if best is None:
+        return None
+    sh, sw = y.shape
+    ys, xs = np.nonzero((lab == best) & (blown > 0))
+    if len(ys) < 5:
+        return None
+    if area <= 0.03:
+        cx, cy = float(xs.mean()), float(ys.mean())
+    else:
+        lo = ys > ys.min() + 0.80 * (ys.max() - ys.min())
+        cx, cy = float(xs[lo].mean()), float(ys[lo].mean())
+    return float(cx / sw * w), float(cy / sh * h)
+
+
+def _sun(arr: np.ndarray, d: Drama, k: float) -> np.ndarray:
+    """A warm glow around the sun and soft rays radiating from it: what makes a backlit scene feel lit rather than merely exposed."""
+    ag, ar = d.glow / 100.0 * k, d.rays / 100.0 * k
+    if ag <= 0 and ar <= 0:
+        return arr
+    h, w = arr.shape[:2]
+    if d.sun_x < 0 or d.sun_y < 0:
+        return arr
+    src = (d.sun_x * w, d.sun_y * h)
+    s = min(1.0, 720 / max(h, w))
+    sh, sw = max(2, int(h * s)), max(2, int(w * s))
+    cx, cy = src[0] * s, src[1] * s
+    yy, xx = np.mgrid[0:sh, 0:sw].astype(np.float32)
+    dx, dy = xx - cx, yy - cy
+    r = np.sqrt(dx * dx + dy * dy)
+    R = 0.30 * max(sh, sw)
+    lab_c = np.array([[[80.0, *_ab(d.bloom_hue, 68.0)]]], np.float32)
+    col = np.clip(cv2.cvtColor(lab_c, cv2.COLOR_Lab2RGB)[0, 0], 0, 1)          # a saturated version of the bloom colour for the glow
+    out = arr
+    add = np.zeros((sh, sw), np.float32)
+    if ag > 0:
+        add += np.exp(-(r / R) ** 1.25) * ag * 0.85
+    if ar > 0:
+        rng = np.random.default_rng(7)
+        nb = 720
+        noise = rng.random(nb).astype(np.float32)
+        prof = cv2.GaussianBlur(np.tile(noise, 3)[None, :], (0, 0), 3.0)[0][nb:2 * nb]          # wrap-around: the rays close the circle
+        prof = np.clip((prof - np.percentile(prof, 55)) / (np.ptp(prof) * 0.45), 0, 1) ** 1.4
+        th = (np.arctan2(dy, dx) + np.pi) / (2 * np.pi) * nb
+        ray = prof[np.clip(th.astype(np.int32), 0, nb - 1)]
+        add += ray * np.exp(-r / (1.1 * R)) * (r > 3) * ar * 0.55
+    add = cv2.resize(cv2.GaussianBlur(add, (0, 0), 1.2), (w, h), interpolation=cv2.INTER_LINEAR)
+    y = (arr @ LUMA)
+    add = add * np.clip(0.40 + 1.0 * y, 0, 1)                          # light passes over dark trunks only faintly
+    glow = np.clip(add[..., None] * col, 0, 1)
+    out = 1.0 - (1.0 - out) * (1.0 - glow)
+    if ag > 0:                                                         # the sun itself: a clean, nearly white core
+        core = cv2.resize(np.exp(-(r / (0.075 * max(sh, sw))) ** 1.6) * min(1.0, ag * 1.4), (w, h), interpolation=cv2.INTER_LINEAR)
+        out = 1.0 - (1.0 - out) * (1.0 - (core[..., None] * np.array([1.0, 0.97, 0.9], np.float32)))
+    return out
+
+
 def _bloom(arr: np.ndarray, d: Drama, k: float) -> np.ndarray:
     """Glow from the brightest areas: blurred highlights added back (screen), tinted by the bloom colour."""
     amt = d.bloom / 100.0 * k
@@ -243,6 +319,7 @@ def apply(arr: np.ndarray, masks: Dict[str, np.ndarray], depth: Optional[np.ndar
     if sky is not None:
         out = _sky(out, sky, d, k, targets)
     out = _bloom(out, d, k)
+    out = _sun(out, d, k)
     out = _mist(out, sky, depth, d, k)
     out = _anchor_white(out, d.white)
     return np.clip(out, 0, 1).astype(np.float32)
