@@ -689,6 +689,86 @@ def t_sky_full_res_matte(an, p) -> Result:
         f"mean edge error {err0:.4f} -> {err1:.4f}"
 
 
+def t_drama_operations(an, p) -> Result:
+    import drama
+    from params import Drama
+    src, size, _ = engine._target(an, 700)
+    masks = engine._masks_at(an, size)
+    sky = masks.get("sky")
+    d = Drama(enabled=True, amount=100, mood=90, protect=0, enrich=0, sky_burn=0, sky_texture=0, sky_colour=0, bloom=0, mist=0, depth_haze=0,
+              sh_hue=272, sh_chroma=16, mid_hue=272, mid_chroma=24, hi_hue=272, hi_chroma=20)
+    off = drama.apply(src, masks, None, Drama(enabled=False))
+    zero = drama.apply(src, masks, None, d.model_copy(update={"amount": 0}))
+    mood = drama.apply(src, masks, None, d)
+    lab0, lab1 = cv2.cvtColor(src, cv2.COLOR_RGB2Lab), cv2.cvtColor(mood, cv2.COLOR_RGB2Lab)
+    dL = float(np.abs(lab1[..., 0] - lab0[..., 0]).mean())
+    ab_shift = float(np.hypot(lab1[..., 1] - lab0[..., 1], lab1[..., 2] - lab0[..., 2]).mean())
+    c0 = np.hypot(lab0[..., 1], lab0[..., 2])
+    grey, vivid = c0 < 8, c0 > 40
+    moved = lambda m: float(np.hypot(lab1[..., 1] - lab0[..., 1], lab1[..., 2] - lab0[..., 2])[m].mean()) if m.sum() > 200 else None
+    prot = drama.apply(src, masks, None, d.model_copy(update={"protect": 100}))
+    lab2 = cv2.cvtColor(prot, cv2.COLOR_RGB2Lab)
+    vivid_moved_protected = float(np.hypot(lab2[..., 1] - lab0[..., 1], lab2[..., 2] - lab0[..., 2])[vivid].mean()) if vivid.sum() > 200 else 0.0
+    vivid_moved_free = moved(vivid) or 0.0
+    checks = {}
+    checks["off and amount 0 change nothing"] = bool(off is src or np.array_equal(off, src)) and float(np.abs(zero - src).max()) < 1e-6
+    checks["mood changes colour, not brightness"] = ab_shift > 3.0 and dL < 6.0
+    checks["colourful pixels are protected"] = vivid.sum() < 200 or vivid_moved_protected < 0.5 * max(vivid_moved_free, 1e-6)
+    if sky is not None and (sky > 0.5).mean() > 0.05:
+        sd = d.model_copy(update={"mood": 0, "sky_burn": 100, "sky_texture": 50})
+        out = drama.apply(src, masks, None, sd)
+        diff = np.abs(out - src).max(axis=2)
+        rr = max(3, int(round(0.012 * max(sky.shape)))) * 3                       # the burn deliberately covers the mask's soft edge (no bright rim at the skyline)
+        away = cv2.dilate((sky > 0.02).astype(np.uint8), cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * rr + 1, 2 * rr + 1))) == 0
+        checks["sky burn stays inside the sky"] = (float(diff[away].max()) < 0.012 if away.sum() > 50 else True) and float(diff[sky > 0.9].mean()) > 0.01
+    bl = drama.apply(src, masks, None, d.model_copy(update={"mood": 0, "bloom": 100}))
+    bl2 = drama.apply(src, masks, None, d.model_copy(update={"mood": 0, "bloom": 40}))
+    checks["bloom grows with its slider (or there is no light to bloom)"] = float(np.abs(bl - src).mean()) >= float(np.abs(bl2 - src).mean()) - 1e-9
+    checks["deterministic"] = bool(np.array_equal(drama.apply(src, masks, None, d), mood))
+    s2, size2, _ = engine._target(an, 1400)
+    m2 = engine._masks_at(an, size2)
+    big = drama.apply(s2, m2, None, d.model_copy(update={"mood": 60, "bloom": 50, "sky_burn": 50, "sky_texture": 30}))
+    small = drama.apply(src, masks, None, d.model_copy(update={"mood": 60, "bloom": 50, "sky_burn": 50, "sky_texture": 30}))
+    cmp = cv2.resize(big, (small.shape[1], small.shape[0]), interpolation=cv2.INTER_AREA)
+    corr = float(np.corrcoef((cmp @ LUMA).ravel(), (small @ LUMA).ravel())[0, 1])
+    checks["same result at two sizes"] = corr > 0.97
+    bad = [k for k, v in checks.items() if not v]
+    return "drama operations: mood colours without changing brightness, colourful pixels protected, sky burn stays in the sky, bloom scales, size-independent", not bad, \
+        f"{'all hold' if not bad else 'FAILED: ' + str(bad)}; colour shift {ab_shift:.1f}, brightness change {dL:.1f}, corr {corr:.3f}"
+
+
+def t_drama_looks(an, p) -> Result:
+    import drama_looks as dl
+    looks = dl.generate(an)
+    ids = [l["id"] for l in looks]
+    ok_list = len(looks) == len(dl.VARIANTS) and [l["fit"] for l in looks] == sorted([l["fit"] for l in looks], reverse=True) and sum(l["recommended"] for l in looks) == 3
+    base = _render_arr(an, p, 500)
+    skin = an.bank.get("skin", (base.shape[1], base.shape[0]))
+    outs, bad = {}, []
+    for lid in ids:
+        q, notes, facts = dl.build(an, p, lid, 1.0)
+        r = _render_arr(an, q, 500)
+        outs[lid] = r
+        clip = float((r.max(2) > 0.995).mean() - (base.max(2) > 0.995).mean())
+        crush = float((r.max(2) < 0.02).mean() - (base.max(2) < 0.02).mean())
+        med = float(np.median(_luma(r)))
+        ok = q.drama.enabled and q.wb_mode == "asshot" and clip < 0.06 and crush < 0.12 and 0.12 < med < 0.75 and bool(notes)
+        if skin is not None and (skin > 0.5).mean() > 0.01:
+            ok = ok and float(np.abs(r[skin > 0.5] - base[skin > 0.5]).mean()) < 0.14
+        if not ok:
+            bad.append(lid)
+    keys = list(outs)
+    gaps = [float(np.abs(outs[a] - outs[b]).mean()) for i, a in enumerate(keys) for b in keys[i + 1:]]
+    zero = dl.build(an, p, ids[0], 0.0)[0]
+    z = float(np.abs(_render_arr(an, zero, 500) - base).mean())
+    no_sky = "sky" not in an.bank.names()
+    q, _, _ = dl.build(an, p, "blue_hour", 1.0)
+    sky_ok = (not no_sky) or q.drama.sky_burn == 0.0
+    return "drama looks: generated for the scene, all safe, as-shot white balance kept, clearly different from each other", \
+        bool(ok_list and not bad and min(gaps) > 0.01 and z < 0.05 and sky_ok), \
+        f"{len(looks)} looks, top: {ids[:3]}; unsafe: {bad or 'none'}; closest pair differs {min(gaps):.3f}; strength 0 changes {z:.3f}"
+
+
 TESTS: List[Callable] = [
     t_mask_alignment_and_range, t_mask_operations, t_mask_controls, t_local_edit_stays_inside_mask,
     t_db_off_is_identity, t_db_highlights_and_shadows_protected, t_db_preserves_skin_texture, t_db_no_halo,
@@ -696,7 +776,7 @@ TESTS: List[Callable] = [
     t_render_size_matches_image, t_neutral_params_are_identity, t_slider_directions, t_srgb_pipeline, t_light_scene_read,
     t_custom_mask_shapes, t_gradient_and_radial_geometry, t_brush_resolution_independent, t_range_masks_select_what_they_claim,
     t_mask_limit_and_refine, t_custom_mask_edit_stays_inside, t_point_curve,
-    t_region_coverage, t_region_paint_fix, t_lut_behaviour, t_match_reference, t_banded_ops_are_exact, t_smart_looks, t_adaptive_looks, t_sky_studio, t_sky_replacement, t_sky_full_res_matte,
+    t_region_coverage, t_region_paint_fix, t_lut_behaviour, t_match_reference, t_banded_ops_are_exact, t_smart_looks, t_adaptive_looks, t_sky_studio, t_sky_replacement, t_sky_full_res_matte, t_drama_operations, t_drama_looks,
 ]
 
 

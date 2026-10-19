@@ -105,6 +105,36 @@ class ToneCurve(BaseModel):
     b: List[List[float]] = [[0.0, 0.0], [1.0, 1.0]]
 
 
+class Drama(BaseModel):
+    """The 'Drama' look: what separates a pro landscape from a correct one. Colour is poured over ALL tones (including greys), the sky is
+    darkened but keeps its cloud texture, light gets bloom and mist, and the detail is pushed. Every number is a normal editable slider."""
+    enabled: bool = False
+    amount: float = Field(100, ge=0, le=150)           # master strength
+    mood: float = Field(80, ge=0, le=100)              # how strongly the three colours below replace the picture's own cast
+    sh_hue: float = Field(250, ge=0, le=360)           # colour of the shadows (Lab hue angle: 15 pink-red, 60 orange, 95 yellow, 140 green, 215 teal, 272 blue, 295 violet, 340 magenta)
+    sh_chroma: float = Field(12, ge=0, le=50)
+    mid_hue: float = Field(250, ge=0, le=360)
+    mid_chroma: float = Field(20, ge=0, le=50)
+    hi_hue: float = Field(250, ge=0, le=360)
+    hi_chroma: float = Field(18, ge=0, le=50)
+    protect: float = Field(60, ge=0, le=100)           # leave already-colourful pixels (foliage, flowers) alone
+    enrich: float = Field(25, ge=-100, le=100)         # make the colours that are there richer (gamut-limited)
+    skin_safe: bool = True                             # never tint skin
+    sky_burn: float = Field(60, ge=0, le=100)          # graduated darkening of the sky toward the top
+    sky_texture: float = Field(50, ge=0, le=100)       # contrast inside the clouds (keeps them from going flat)
+    sky_colour: float = Field(40, ge=0, le=100)        # extra colour in the sky
+    sky_hue: float = Field(60, ge=0, le=360)           # the sky's own colour (an orange sky over green land, a blue sky over a golden foreground)
+    sky_chroma: float = Field(0, ge=0, le=50)          # 0 = the sky simply takes the picture's colours
+    bloom: float = Field(30, ge=0, le=100)             # glow around the brightest light
+    bloom_hue: float = Field(70, ge=0, le=360)
+    mist: float = Field(30, ge=0, le=100)              # luminous haze on the horizon + atmospheric depth
+    depth_haze: float = Field(25, ge=0, le=100)        # atmospheric depth: far ground sinks into haze (turned down automatically in already-hazy scenes)
+    white: float = Field(0, ge=0, le=1)                # light anchor: the brightest tones are restored toward this level (the photo's own brightness), 0 = off
+    mist_y: float = Field(-1, ge=-1, le=1)             # where the haze lies (fraction of height); -1 = find the horizon automatically
+    detail: float = Field(50, ge=0, le=100)            # recorded here so the look can be re-applied; the sliders live in Basic
+    name: str = ""                                     # which generated look this is
+
+
 class SkyReplace(BaseModel):
     """Replace the sky with one from the sky library, matched to the photo. Everything adaptive is decided when the sky is chosen
     (see sky_replace.plan) and stored here, so the render itself is cheap and every number stays editable."""
@@ -218,6 +248,7 @@ class EditParams(BaseModel):
     masks: List[MaskLayer] = []
     lut: LutSetting = LutSetting()
     sky_replace: SkyReplace = SkyReplace()
+    drama: Drama = Drama()
     grading: Grading = Grading()
     grading_enabled: bool = True                  # HSL mixer + colour balance + curve
 

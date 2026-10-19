@@ -20,6 +20,7 @@ from pydantic import BaseModel
 
 import adjust
 import engine
+import drama_looks
 import library
 import look_engine
 import luts
@@ -773,3 +774,82 @@ class EditKey(BaseModel):
 def edit_delete(req: EditKey):
     _edit_file(req.name, req.size).unlink(missing_ok=True)
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------------------------
+# Drama looks (generated for each photo)
+# ---------------------------------------------------------------------------------------------
+DRAMA_THUMBS: "OrderedDict[tuple, bytes]" = OrderedDict()
+DRAMA_BUILDING: set = set()
+
+
+def _prepare_drama_thumbs(sid: str, an, order):
+    """Build the preview of every generated look, one after another (parallel builds just queue on the photo's lock)."""
+    import io
+    try:
+        base = engine.auto_params(an, "auto")
+        for vid in order:
+            if (sid, vid) in DRAMA_THUMBS:
+                continue
+            try:
+                with LOCKS[sid]:
+                    p, _, _ = drama_looks.build(an, base, vid, 1.0)
+                    img = engine.render(an, p, 300, True)
+                buf = io.BytesIO()
+                img.save(buf, "JPEG", quality=80)
+                DRAMA_THUMBS[(sid, vid)] = buf.getvalue()
+            except Exception as e:
+                print("drama thumb failed", vid, repr(e)[:100])
+                DRAMA_THUMBS[(sid, vid)] = b""
+            while len(DRAMA_THUMBS) > 300:
+                DRAMA_THUMBS.popitem(last=False)
+    finally:
+        DRAMA_BUILDING.discard(sid)
+
+
+@app.get("/api/drama/{sid}")
+def drama_list(sid: str):
+    """The Drama looks that suit THIS photo, ranked (scene analysed first). Previews are built in the background."""
+    an = _session(sid)
+    with LOCKS[sid]:
+        looks = drama_looks.generate(an)
+        s = drama_looks.read_scene(an)
+    if sid not in DRAMA_BUILDING and any((sid, l["id"]) not in DRAMA_THUMBS for l in looks):
+        DRAMA_BUILDING.add(sid)
+        threading.Thread(target=_prepare_drama_thumbs, args=(sid, an, [l["id"] for l in looks]), daemon=True).start()
+    return {"looks": looks, "scene": {"light": s.light, "sky": s.sky_kind, "grey": round(s.neutral, 2), "cast_strength": round(s.cast, 1),
+                                      "bright_light": round(s.bright_source, 2), "horizon": s.has_horizon, "people": s.people}}
+
+
+@app.get("/api/drama_thumb/{sid}/{vid}")
+def drama_thumb(sid: str, vid: str, v: int = 0):
+    import time
+    from fastapi.responses import Response
+    _session(sid)
+    if vid not in drama_looks.VARIANTS:
+        raise HTTPException(404, "Unknown look.")
+    for _ in range(240):                                   # up to ~2 minutes: the previews are being built one by one
+        data = DRAMA_THUMBS.get((sid, vid))
+        if data is not None:
+            break
+        time.sleep(0.5)
+    if not data:
+        raise HTTPException(404, "Preview not available.")
+    return Response(data, media_type="image/jpeg", headers={"Cache-Control": "max-age=3600"})
+
+
+class DramaRequest(BaseModel):
+    session_id: str
+    look_id: str
+    params: EditParams
+    strength: float = 100
+
+
+@app.post("/api/drama")
+def drama_apply(req: DramaRequest):
+    an = _session(req.session_id)
+    if req.look_id not in drama_looks.VARIANTS:
+        raise HTTPException(404, "Unknown look.")
+    with LOCKS[req.session_id]:
+        p, notes, facts = drama_looks.build(an, req.params, req.look_id, req.strength / 100.0)
+    return {"params": p.model_dump(), "notes": notes, "facts": facts}

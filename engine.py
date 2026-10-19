@@ -21,6 +21,7 @@ import bokeh
 import colorcal
 import custom_masks
 import denoise
+import drama
 import luts
 import sky_replace
 import depth as depthmod
@@ -787,6 +788,15 @@ def _render(an: Analysis, p: EditParams, edge: Optional[int], draft: bool) -> ad
 
     up = basic_key + (json.dumps(mask_keys), json.dumps(layer_keys), _js(p.tone), _js(p.grading), _js(p.lut), json.dumps([p.balance_shadows, p.balance_mids, p.balance_highs]),
                       _js(p.curve), p.grading_enabled)
+
+    # 3b'. Drama: mood colour over all tones, sky burn that keeps the clouds, bloom and mist
+    if p.drama.enabled and p.drama.amount > 0:
+        dmap_d = None
+        if an.depth is not None:
+            dmap_d = _memo(an, ("depth", size) + ck[2:], lambda: _resize(an.depth.astype(np.float32), size).clip(0, 1))
+        dsrc = out
+        out = _memo(an, ("drama", _js(p.drama), hash(up)) + ck, lambda: drama.apply(dsrc, m, dmap_d, p.drama))
+        up = up + (_js(p.drama),)
 
     # 3c. creative LUT (an imported .cube or a built-in look), after the grade and before the finishing steps
     if p.lut.id and p.lut.intensity > 0:

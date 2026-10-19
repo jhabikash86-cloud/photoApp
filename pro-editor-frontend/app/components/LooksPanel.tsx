@@ -5,12 +5,25 @@ import Slider from './Slider';
 import Toggle from './Toggle';
 import type { Suggest } from './SkyPanel';
 import { Sub } from './panels';
-import { API_URL, EditCtx, Params, newLayer } from '../lib/params';
+import { API_URL, DramaSettings, EditCtx, Params, newLayer } from '../lib/params';
 
 type LutItem = { id: string; name: string; builtin: boolean };
 type Preset = { id: string; name: string; scopes: string[]; params: Partial<Params> };
 type LookItem = { id: string; label: string; result: string; adjusts: string };
 type LookState = { id: string; k: number; notes: string[]; regions: string[] };
+type DramaItem = { id: string; label: string; blurb: string; fit: number; reason: string; recommended: boolean };
+type DramaState = { id: string; k: number; notes: string[] };
+const dramaStore = new Map<string, DramaState>();
+const DRAMA_SLIDERS: { key: string; label: string; min: number; max: number; hint: string }[] = [
+  { key: 'mood', label: 'Colour mood', min: 0, max: 100, hint: 'How strongly the look\'s colours replace the picture\'s own cast' },
+  { key: 'enrich', label: 'Richer colours', min: -100, max: 100, hint: 'Make the colours that are there richer' },
+  { key: 'sky_burn', label: 'Sky darkening', min: 0, max: 100, hint: 'Graduated darkening toward the top of the sky' },
+  { key: 'sky_texture', label: 'Cloud contrast', min: 0, max: 100, hint: 'Keeps clouds from going flat' },
+  { key: 'sky_colour', label: 'Sky colour', min: 0, max: 100, hint: 'Extra colour in the sky' },
+  { key: 'bloom', label: 'Light bloom', min: 0, max: 100, hint: 'Glow around the brightest light' },
+  { key: 'mist', label: 'Horizon mist', min: 0, max: 100, hint: 'Luminous haze on the horizon' },
+  { key: 'depth_haze', label: 'Depth haze', min: 0, max: 100, hint: 'Far ground sinks into haze' },
+];
 type MatchState = { refId: string; thumb: string; snap: Params; notes: string[]; strength: number };
 
 export const SCOPES: { id: string; label: string; hint: string; def: boolean }[] = [
@@ -89,6 +102,10 @@ export default function LooksPanel({ ctx, suggest }: { ctx: EditCtx; suggest: Su
   const [looks, setLooks] = useState<LookItem[]>([]);
   const [land, setLand] = useState<LookState | null>(lookStore.get(sid) ?? null);
   const [busyLook, setBusyLook] = useState(false);
+  const [dramaList, setDramaList] = useState<{ looks: DramaItem[]; scene: Record<string, unknown> } | null>(null);
+  const [dramaSel, setDramaSel] = useState<DramaState | null>(dramaStore.get(sid) ?? null);
+  const [busyDrama, setBusyDrama] = useState(false);
+  const dramaTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [smartSky, setSmartSky] = useState(true);
   const lookTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lutFile = useRef<HTMLInputElement>(null);
@@ -104,7 +121,7 @@ export default function LooksPanel({ ctx, suggest }: { ctx: EditCtx; suggest: Su
     getJSON<{ previews: Record<string, string> }>('/api/lut_previews', { session_id: sid, params: pRef.current })
       .then((d) => setPreviews(d.previews)).catch(() => {}).finally(() => setLoadingPrev(false));
   }, [sid]);
-  useEffect(() => { loadLuts(); loadPresets(); Promise.resolve().then(refreshPreviews); getJSON<{ looks: LookItem[] }>('/api/looks').then((d) => setLooks(d.looks)).catch(() => {}); }, [loadLuts, loadPresets, refreshPreviews]);
+  useEffect(() => { loadLuts(); loadPresets(); Promise.resolve().then(refreshPreviews); getJSON<{ looks: LookItem[] }>('/api/looks').then((d) => setLooks(d.looks)).catch(() => {}); fetch(`${API_URL}/api/drama/${sid}`).then((r) => r.json()).then((d) => { if (d.looks) setDramaList(d); }).catch(() => {}); }, [loadLuts, loadPresets, refreshPreviews, sid]);
 
   const setMatchState = (m: MatchState | null) => { if (m) matchStore.set(sid, m); else matchStore.delete(sid); setMatch(m); };
   const toggleScope = (id: string) => setScopes((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
@@ -135,6 +152,27 @@ export default function LooksPanel({ ctx, suggest }: { ctx: EditCtx; suggest: Su
       effects: { ...c.effects, vignette: ctx.auto.effects.vignette } }), true, true);
     setLandState(null);
   };
+
+  // ---------------------------------------------------------------- Drama looks (generated for this photo)
+  const saveDrama = (v: DramaState | null) => { if (v) dramaStore.set(sid, v); else dramaStore.delete(sid); setDramaSel(v); };
+  const runDrama = useCallback(async (id: string, k: number) => {
+    setBusyDrama(true);
+    try {
+      const d = await getJSON<{ params: Params; notes: string[] }>('/api/drama', { session_id: sid, look_id: id, params: pRef.current, strength: Math.round(k * 100) });
+      ctx.update(() => d.params, true, true);
+      saveDrama({ id, k, notes: d.notes });
+    } catch (e) { ctx.flash(e instanceof Error ? e.message : 'Could not apply that look'); }
+    finally { setBusyDrama(false); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sid, ctx]);
+  const onDramaStrength = (v: number) => {
+    if (!dramaSel) return;
+    saveDrama({ ...dramaSel, k: v / 100 });
+    if (dramaTimer.current) clearTimeout(dramaTimer.current);
+    dramaTimer.current = setTimeout(() => runDrama(dramaSel.id, v / 100), 280);
+  };
+  const dramaOff = () => { ctx.update((c) => ({ ...c, drama: { ...(c.drama as DramaSettings), enabled: false } }), true, true); saveDrama(null); };
+  const dm = p.drama;
 
   // ---------------------------------------------------------------- LUTs
   const pickLut = (id: string | null) => ctx.update((c) => ({ ...c, lut: { id, intensity: c.lut?.intensity ?? 100 } }), true, true);
@@ -208,6 +246,39 @@ export default function LooksPanel({ ctx, suggest }: { ctx: EditCtx; suggest: Su
 
   return (
     <>
+      <Sub title="Drama looks for this photo">
+        <p className="text-[11px] leading-relaxed text-zinc-500">The scene is analysed, then looks are generated for it: colour poured over every tone, a sky that keeps its clouds, bloom and mist. The starred ones fit best, but it is your call.</p>
+        {!dramaList && <p className="text-[11px] text-zinc-500">Analysing the scene…</p>}
+        {dramaList && (
+          <div className="grid grid-cols-2 gap-1.5">
+            {dramaList.looks.map((l) => (
+              <button key={l.id} disabled={busyDrama} onClick={() => runDrama(l.id, dramaSel?.k ?? 1)} title={`${l.blurb} · ${l.reason}`}
+                className={`overflow-hidden rounded-lg border text-left transition-colors disabled:opacity-60 ${dramaSel?.id === l.id && dm?.enabled ? 'border-indigo-400 bg-indigo-950' : 'border-zinc-700 hover:border-zinc-500'}`}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={`${API_URL}/api/drama_thumb/${sid}/${l.id}`} alt={l.label} loading="lazy" className="aspect-[3/2] w-full bg-zinc-800 object-cover" />
+                <div className="px-2 py-1.5">
+                  <div className="truncate text-[12px] font-medium text-zinc-100">{l.recommended ? '★ ' : ''}{l.label}</div>
+                  <div className="truncate text-[10px] text-zinc-400">{l.reason}</div>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+        {busyDrama && <p className="text-[11px] text-zinc-500">Building the look for this photo…</p>}
+        {dm?.enabled && (
+          <>
+            <Slider label="Drama strength" value={dm.amount} min={0} max={150} def={100} fmt={(v) => `${Math.round(v)}%`}
+              onChange={(v) => (dramaSel ? onDramaStrength(v) : ctx.set(['drama', 'amount'], v))} />
+            {DRAMA_SLIDERS.map((d) => (
+              <Slider key={d.key} label={d.label} hint={d.hint} value={(dm as unknown as Record<string, number>)[d.key]} min={d.min} max={d.max}
+                fmt={(v) => `${Math.round(v)}`} onChange={(v) => ctx.set(['drama', d.key], v)} />
+            ))}
+            {dramaSel && <ul className="list-disc space-y-1 pl-4 text-[11px] leading-snug text-zinc-400">{dramaSel.notes.map((n, i) => <li key={i}>{n}</li>)}</ul>}
+            <button onClick={dramaOff} className={`${chip(false)} w-full`}>Turn Drama off</button>
+          </>
+        )}
+      </Sub>
+
       {suggest && suggest.looks.length > 0 && (
         <Sub title="Suggested for this photo">
           <p className="text-[11px] leading-relaxed text-zinc-500">Picked after analysing this picture (light, scene, sky and tones).</p>

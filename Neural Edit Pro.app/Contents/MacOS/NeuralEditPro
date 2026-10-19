@@ -20,7 +20,8 @@ if ! up 8000 || ! up 3000; then
 fi
 CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 if [ -x "$CHROME" ]; then
-  "$CHROME" --app=http://localhost:3000 --window-size=1500,950 >/dev/null 2>&1 &
+  nohup "$CHROME" --app=http://localhost:3000 --window-size=1500,950 >/dev/null 2>&1 &
+  disown
 else
   open "http://localhost:3000"
 fi
