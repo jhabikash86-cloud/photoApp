@@ -439,10 +439,13 @@ def build(an, base: EditParams, look: Look, strength: float, light: Optional[str
 def _keep_current(p: EditParams, cur: EditParams, touched: List[str], kk: float):
     """Blend the look with the edit that was on the photo: weight kk on the look, 1-kk on what was there."""
     import match
+    p.basic.keep_whites = cur.basic.keep_whites                  # a setting, not an adjustment: never summed
     keep = 1.0 - kk
     if keep <= 1e-6:
         return
     for key in type(p.basic).model_fields:
+        if key == "keep_whites":
+            continue
         if key not in ("temperature", "tint"):
             setattr(p.basic, key, getattr(p.basic, key) + keep * getattr(cur.basic, key))
     for c in p.mixer:

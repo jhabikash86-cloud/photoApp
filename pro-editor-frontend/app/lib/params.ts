@@ -5,7 +5,7 @@ export const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000
 
 export type Basic = {
   temperature: number; tint: number; exposure: number; contrast: number; highlights: number; shadows: number;
-  whites: number; blacks: number; texture: number; clarity: number; dehaze: number; vibrance: number; saturation: number;
+  whites: number; blacks: number; texture: number; clarity: number; dehaze: number; vibrance: number; saturation: number; keep_whites: number;
 };
 export type Region = {
   exposure: number; contrast: number; vibrance: number; saturation: number; clarity: number; dehaze: number; temperature: number; hue: number;

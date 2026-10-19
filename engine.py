@@ -274,7 +274,7 @@ def analyze(path: str, sid: Optional[str] = None) -> Analysis:
 # ---------------------------------------------------------------------------------------------
 # the automatic edit, as slider values
 # ---------------------------------------------------------------------------------------------
-NOT_SCALED = {"enabled", "mask_strength", "feather", "refine", "invert", "strength"}   # controls, not adjustments
+NOT_SCALED = {"enabled", "mask_strength", "feather", "refine", "invert", "strength", "keep_whites"}   # controls, not adjustments
 
 
 def _scale_model(model, k):
@@ -831,6 +831,10 @@ def _render(an: Analysis, p: EditParams, edge: Optional[int], draft: bool) -> ad
                                         m.get("hair"), float(an.stats.get("noise", 0.0)), matte))
         up = up + ("bokeh", e.bokeh, e.bokeh_size, e.bokeh_highlights, e.bokeh_focus)
 
+    # 5b. keep the picture's own white level: highlight recovery and sky burn squeeze the top of the tonal range (a pro edit keeps real whites)
+    if p.basic.keep_whites > 0:
+        out = _keep_whites(out, src0, p.basic.keep_whites / 100.0)
+
     # 6. finishing
     if e.glow and not draft:
         out = retouch.dreamy_glow(out, e.glow / 100 * 0.3, m.get("sky"), m.get("skin"))
@@ -841,6 +845,23 @@ def _render(an: Analysis, p: EditParams, edge: Optional[int], draft: bool) -> ad
     result = np.clip(src0 + (np.clip(out, 0, 1) - src0) * p.intensity, 0, 1)
     img = adjust.to_image(result)
     return img if draft else adjust.sharpen_image(img, e.sharpen * min(1.0, p.intensity))
+
+
+def _keep_whites(out: np.ndarray, src0: np.ndarray, amount: float) -> np.ndarray:
+    """Lift the upper tones (hue kept) until the brightest ~0.5% is back at the ORIGINAL's level, never above 0.97; shadows and mids are untouched.
+    Acts only when the whole top end was pulled down; a picture that still has its bright light is left alone."""
+    LUMA = np.array([0.2126, 0.7152, 0.0722], np.float32)
+    target = min(0.97, float(np.percentile(src0[::4, ::4] @ LUMA, 99.5)))
+    if target < 0.6:
+        return out
+    hi = float(np.percentile(out[::4, ::4] @ LUMA, 99.5))
+    if hi >= target - 0.02:
+        return out
+    g = 1.0 + (target / max(hi, 0.25) - 1.0) * amount
+    y = out @ LUMA
+    w = np.clip((y - 0.30) / 0.45, 0, 1)
+    w = w * w * (3 - 2 * w)
+    return np.clip(out * (1.0 + (g - 1.0) * w)[..., None], 0, 1).astype(np.float32)
 
 
 def regions_overlay(an: Analysis, edge: int = 1400) -> adjust.Image.Image:

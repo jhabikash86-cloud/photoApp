@@ -334,7 +334,7 @@ const ADJ_GROUPS: { title: string; items: { key: keyof typeof ZERO_ADJ; label: s
 
 export function CustomMasksPanel({ ctx, ui }: { ctx: EditCtx; ui: MaskUI }) {
   const { p } = ctx;
-  const layers = p.masks;
+  const layers = p.masks ?? [];
   const sel = layers.find((l) => l.id === ui.selected) ?? null;
   const evFmt = (v: number) => `${v >= 0 ? '+' : ''}${((v / 100) * 3).toFixed(2)}`;
   const has = (n: string) => ctx.analysis.mask_names?.includes(n);

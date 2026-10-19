@@ -276,6 +276,9 @@ def score(v: Variant, s: Scene) -> Tuple[float, str]:
         if s.depth_range > 0.45 or s.haze > 0.2: add(0.18, "layers of distance and haze")
         if fol < 0.1: sc -= 0.35                                      # 'lush' needs real green
         if lt in ("sunset", "golden_hour"): add(0.15, "warm low light")
+    if s.trees > 0.3 and s.warm > 0.22 and s.green < 0.65:                # autumn-like foliage: keep the warmth, do not cool it
+        if v.id in ('golden_glow', 'lush_valley', 'teal_orange'): add(0.14, 'foliage turning gold')
+        if v.id in ('blue_hour', 'moody_silver'): sc -= 0.12
     if s.sun > 0.5 and v.id in ('golden_glow', 'fiery_sky', 'teal_orange', 'lush_valley'):
         add({'golden_glow': 0.5, 'fiery_sky': 0.12, 'teal_orange': 0.05, 'lush_valley': 0.08}[v.id], 'a sun to build the light around')
     if v.id == "golden_glow" and s.bright_source > 0.4 and s.low_key > 0.3: add(0.22, "a bright sun in a dark scene")
@@ -405,16 +408,24 @@ def _govern(an, p: EditParams, base: EditParams) -> List[str]:
         clip, crush = float((out.max(2) > 0.995).mean()) - clip0, float((out.max(2) < 0.02).mean()) - crush0
         med = float(np.median(out @ LUMA))
         skin_shift = float(np.abs(out[skin] - ref[skin]).mean()) if skin is not None else 0.0
+        c_out = float(np.hypot(*np.moveaxis(cv2.cvtColor(out, cv2.COLOR_RGB2Lab)[..., 1:], -1, 0)).mean())
+        c_ref = float(np.hypot(*np.moveaxis(cv2.cvtColor(ref, cv2.COLOR_RGB2Lab)[..., 1:], -1, 0)).mean())
         bad = []
         if clip > 0.05: bad.append("highlights were clipping")
         if crush > 0.10: bad.append("shadows were crushing")
         if med < 0.14: bad.append("it came out very dark")
         if skin_shift > 0.12: bad.append("skin shifted too much")
+        if c_out > c_ref * 2.4 + 9: bad.append("colour was getting garish")
         if not bad:
             break
         p.drama.amount *= 0.8
         p.drama.mood *= 0.85
         p.drama.bloom *= 0.7
+        if "colour was getting garish" in bad:
+            p.drama.enrich *= 0.7
+            p.drama.sky_colour *= 0.8
+            p.drama.hi_chroma *= 0.8
+            p.drama.mid_chroma *= 0.85
         p.basic.dehaze *= 0.8
         if "it came out very dark" in bad:
             p.basic.exposure += 6

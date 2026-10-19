@@ -743,7 +743,7 @@ def edit_load(name: str, size: int):
         raise HTTPException(404, "No saved edit.")
     try:
         d = json.loads(f.read_text())
-        EditParams(**d["params"])                  # an edit saved by an older version of the app must still be valid
+        d["params"] = EditParams(**d["params"]).model_dump()    # validated AND completed: fields added since it was saved get their defaults
     except Exception:
         raise HTTPException(404, "No usable saved edit.")
     return d

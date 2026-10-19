@@ -27,6 +27,7 @@ class Basic(BaseModel):
     dehaze: float = Field(0, **S)
     vibrance: float = Field(0, **S)
     saturation: float = Field(0, **S)
+    keep_whites: float = Field(75, ge=0, le=100)   # how much of the picture's own white level is restored after highlight recovery (0 = off)
 
 
 class Region(BaseModel):

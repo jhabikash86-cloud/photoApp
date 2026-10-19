@@ -110,6 +110,13 @@ p.sky_replace.id = "some_sky"
 server.edit_save(server.EditSave(name=name, size=size, params=p))
 back = server.edit_load(name, size)
 check("an autosaved edit comes back exactly", back["params"]["basic"]["exposure"] == 17.5 and back["params"]["sky_replace"]["id"] == "some_sky")
+# an edit saved by an OLDER version (without fields added later) must come back complete, or the editor crashes on reopening it
+old = json.loads(server._edit_file(name, size).read_text())
+for k in ("drama", "masks", "sky_replace", "lut"):
+    old["params"].pop(k, None)
+server._edit_file(name, size).write_text(json.dumps(old))
+back_old = server.edit_load(name, size)
+check("an edit saved by an older version comes back with every newer field filled in", all(k in back_old["params"] for k in ("drama", "masks", "sky_replace", "lut")) and back_old["params"]["basic"]["exposure"] == 17.5)
 f = server._edit_file(name, size)
 f.write_text(json.dumps({"name": name, "size": size, "params": {"basic": {"exposure": "not a number"}}}))
 try:

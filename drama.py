@@ -134,26 +134,32 @@ def _sky(arr: np.ndarray, sky: np.ndarray, d: Drama, k: float, targets: np.ndarr
                 f = np.where(y > 1e-4, (top * yr ** g) / np.maximum(y, 1e-4), 1.0)
                 f = np.clip(f, 0.2, 1.0)[..., None]
                 out = out * (1 + (f - 1) * m)
-    tex = d.sky_texture / 100.0 * k
+    tex = min(d.sky_texture / 100.0 * k, 0.75)
     if tex > 0:
-        y = (out @ LUMA).astype(np.float32)
-        core = cv2.erode((sky0 > 0.5).astype(np.uint8), cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * r + 1, 2 * r + 1))).astype(np.float32)
-        core = cv2.GaussianBlur(core, (0, 0), r / 2.0)                          # texture only well inside the sky, never at the skyline
-        k5 = np.ones((5, 5), np.uint8)
-        busy = ((cv2.dilate(y, k5) - cv2.erode(y, k5)) > 0.16).astype(np.uint8)  # twigs, wires, leaf edges: strong local contrast, not clouds
-        busy = cv2.GaussianBlur(cv2.dilate(busy, np.ones((9, 9), np.uint8)).astype(np.float32), (0, 0), 2.5)
+        # computed at a FIXED working size, so the result looks the same at any preview or export size (the cloud shapes are what is boosted)
+        sc = min(1.0, 640.0 / max(h, w))
+        sw_, sh_ = max(8, int(w * sc)), max(8, int(h * sc))
+        ys_ = cv2.resize((out @ LUMA).astype(np.float32), (sw_, sh_), interpolation=cv2.INTER_AREA)
+        sm = cv2.resize((sky0 > 0.5).astype(np.float32), (sw_, sh_), interpolation=cv2.INTER_AREA)
+        sm = (sm > 0.5).astype(np.float32)
+        rs = max(2, int(round(0.012 * max(sw_, sh_))))
+        core = cv2.erode(sm.astype(np.uint8), cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * rs + 1, 2 * rs + 1))).astype(np.float32)
+        core = cv2.GaussianBlur(core, (0, 0), rs / 2.0)                          # texture only well inside the sky, never at the skyline
+        k5 = np.ones((3, 3), np.uint8)
+        busy = ((cv2.dilate(ys_, k5) - cv2.erode(ys_, k5)) > 0.16).astype(np.uint8)  # twigs, wires, leaf edges: strong local contrast, not clouds
+        busy = cv2.GaussianBlur(cv2.dilate(busy, np.ones((5, 5), np.uint8)).astype(np.float32), (0, 0), 1.5)
         core = core * (1.0 - np.clip(busy * 1.4, 0, 1))
-        sm = (sky0 > 0.5).astype(np.float32)
 
         def smooth(sig):                                                        # blur that only looks at SKY pixels (a dark hill must not read as a cloud edge)
-            return cv2.GaussianBlur(y * sm, (0, 0), sig) / np.maximum(cv2.GaussianBlur(sm, (0, 0), sig), 1e-3)
-        det = (y - smooth(max(2.0, h / 45))) * sm
-        fine = (y - smooth(max(1.5, h / 150))) * sm
+            return cv2.GaussianBlur(ys_ * sm, (0, 0), sig) / np.maximum(cv2.GaussianBlur(sm, (0, 0), sig), 1e-3)
+        det = (ys_ - smooth(max(2.0, sh_ / 45))) * sm
+        fine = (ys_ - smooth(max(1.5, sh_ / 150))) * sm
         soft = lambda x, t: np.sign(x) * np.maximum(np.abs(x) - t, 0.0)         # ignore gradient steps and noise: only real structure
-        cloudy = cv2.GaussianBlur(np.abs(soft(det, 0.012)), (0, 0), max(4.0, h / 12))
+        cloudy = cv2.GaussianBlur(np.abs(soft(det, 0.012)), (0, 0), max(4.0, sh_ / 12))
         cloudy = np.clip((cloudy - 0.006) / 0.02, 0, 1)                         # 0 for a clear sky, 1 for a cloudy one
-        boost = (0.30 * np.tanh(soft(det, 0.012) / 0.06) + 0.14 * np.tanh(soft(fine, 0.006) / 0.03)) * core
-        out = np.clip(out + (tex * boost * cloudy)[..., None] * m, 0, 1)
+        boost = (0.17 * np.tanh(soft(det, 0.012) / 0.07) + 0.06 * np.tanh(soft(fine, 0.006) / 0.035)) * core
+        boost = cv2.resize((tex * boost * cloudy).astype(np.float32), (w, h), interpolation=cv2.INTER_LINEAR)
+        out = np.clip(out + boost[..., None] * m, 0, 1)
     col = d.sky_colour / 100.0 * k
     if col > 0:
         ys = _smooth_luma(out)
@@ -192,6 +198,8 @@ def _find_sun(arr: np.ndarray):
     else:
         lo = ys > ys.min() + 0.80 * (ys.max() - ys.min())
         cx, cy = float(xs[lo].mean()), float(ys[lo].mean())
+    if cy / sh > 0.62:                                                  # a sun / lamp is not in the lowest third (foam, wet rocks and white water are not lights)
+        return None
     # a light sits ON something: just below it the picture must fall away (horizon, trees, ground); a bright patch floating in cloud is not a sun
     x0, x1 = int(max(0, cx - 0.08 * sw)), int(min(sw, cx + 0.08 * sw))
     y0, y1 = int(min(sh - 1, cy + 0.02 * sh)), int(min(sh, cy + 0.10 * sh))
