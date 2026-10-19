@@ -122,6 +122,18 @@ def _sky(arr: np.ndarray, sky: np.ndarray, d: Drama, k: float, targets: np.ndarr
         room = np.clip((yl - 0.30) / 0.40, 0, 1)                        # a sky that is already dark or deep is not burned further
         f = 1.0 - 0.34 * burn * ramp * room                             # gentle: a pro lowers a bright sky by ~20%, it must stay luminous
         out = out * (1 + (f[..., None] - 1) * m)
+    mdl = d.sky_model / 100.0 * k
+    if mdl > 0:
+        y = (out @ LUMA).astype(np.float32)
+        sel = sky0 > 0.5
+        if sel.sum() > 200:
+            top = float(np.percentile(y[sel], 97))
+            if top > 0.5:
+                g = 1.0 + 0.9 * mdl                                       # a gamma around the sky's own white: bright clouds stay white, the veil between them deepens
+                yr = np.clip(y / top, 0, 1.2)
+                f = np.where(y > 1e-4, (top * yr ** g) / np.maximum(y, 1e-4), 1.0)
+                f = np.clip(f, 0.2, 1.0)[..., None]
+                out = out * (1 + (f - 1) * m)
     tex = d.sky_texture / 100.0 * k
     if tex > 0:
         y = (out @ LUMA).astype(np.float32)
@@ -167,7 +179,7 @@ def _find_sun(arr: np.ndarray):
     best, area = None, 0.0
     for i in range(1, n):
         a = st[i, cv2.CC_STAT_AREA] / merged.size
-        if 0.0006 < a < 0.30 and a > area and float(blown[lab == i].sum()) > 0.004 * merged.size:
+        if 0.0006 < a < 0.12 and a > area and float(blown[lab == i].sum()) > 0.004 * merged.size:
             best, area = i, a
     if best is None:
         return None
@@ -180,6 +192,12 @@ def _find_sun(arr: np.ndarray):
     else:
         lo = ys > ys.min() + 0.80 * (ys.max() - ys.min())
         cx, cy = float(xs[lo].mean()), float(ys[lo].mean())
+    # a light sits ON something: just below it the picture must fall away (horizon, trees, ground); a bright patch floating in cloud is not a sun
+    x0, x1 = int(max(0, cx - 0.08 * sw)), int(min(sw, cx + 0.08 * sw))
+    y0, y1 = int(min(sh - 1, cy + 0.02 * sh)), int(min(sh, cy + 0.10 * sh))
+    below = float(y[y0:y1, x0:x1].mean()) if y1 > y0 and x1 > x0 else 1.0
+    if below > 0.72 and area > 0.003:
+        return None
     return float(cx / sw * w), float(cy / sh * h)
 
 

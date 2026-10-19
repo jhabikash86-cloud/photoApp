@@ -122,6 +122,7 @@ class Drama(BaseModel):
     skin_safe: bool = True                             # never tint skin
     sky_burn: float = Field(60, ge=0, le=100)          # graduated darkening of the sky toward the top
     sky_texture: float = Field(50, ge=0, le=100)       # contrast inside the clouds (keeps them from going flat)
+    sky_model: float = Field(0, ge=0, le=100)          # cloud modelling: a flat bright veil gets real light and shadow (contrast curve inside the sky)
     sky_colour: float = Field(40, ge=0, le=100)        # extra colour in the sky
     sky_hue: float = Field(60, ge=0, le=360)           # the sky's own colour (an orange sky over green land, a blue sky over a golden foreground)
     sky_chroma: float = Field(0, ge=0, le=50)          # 0 = the sky simply takes the picture's colours
