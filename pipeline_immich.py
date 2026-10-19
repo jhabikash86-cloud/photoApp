@@ -26,14 +26,19 @@ def run(args, name):
     return rc
 
 
-for attempt in range(4):
+left = None
+for attempt in range(3):
     run(["immich_push.py", "upload"], f"upload to Immich (pass {attempt + 1})")
-    todo = subprocess.run([PY, "-c", "import sqlite3;db=sqlite3.connect('library/library.db');print(db.execute('SELECT COUNT(*) FROM photos WHERE dup_of IS NULL AND id NOT IN (SELECT photo_id FROM immich_map)').fetchone()[0])"],
+    left = subprocess.run([PY, "-c", "import sqlite3;db=sqlite3.connect('library/library.db');print(db.execute('SELECT COUNT(*) FROM photos WHERE dup_of IS NULL AND id NOT IN (SELECT photo_id FROM immich_map)').fetchone()[0])"],
                           cwd=HERE, capture_output=True, text=True).stdout.strip()
-    say(f"{todo} photos still not in Immich")
-    if todo == "0":
+    say(f"{left} photos still not in Immich")
+    if left == "0":
         break
-run(["immich_push.py", "albums"], "create Immich albums")
+    time.sleep(120)
+if left != "0":
+    say(f"INCOMPLETE: {left} photos are not in Immich yet. Albums NOT updated. Re-run pipeline_immich.py to continue.")
+    sys.exit(1)
+run(["immich_push.py", "albums"], "create / fill Immich albums")
 run(["immich_push.py", "status"], "immich status")
 run(["backup_library.py", "backup"], "refresh the catalog backup")
-say("ALL DONE")
+say("ALL DONE: every photo is in Immich and the albums are filled")

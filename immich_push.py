@@ -133,35 +133,69 @@ def _sha1(p: str) -> str:
     return h.hexdigest()
 
 
+def _immich_up() -> bool:
+    try:
+        s, r = immich.call("GET", "/api/server/ping", timeout=8)
+        return s == 200
+    except Exception:
+        return False
+
+
+def _wait(cond, what: str, patience_s: int = 4 * 3600) -> bool:
+    """Wait (politely) for something to come back: an unplugged drive, a sleeping network, a restarting server."""
+    t0, announced = time.time(), False
+    while not cond():
+        if not announced:
+            print(f"  waiting for {what} ...", flush=True)
+            announced = True
+        if time.time() - t0 > patience_s:
+            return False
+        time.sleep(30)
+    if announced:
+        print(f"  {what} is back after {(time.time() - t0) / 60:.0f} min", flush=True)
+    return True
+
+
 def upload(limit=None):
     db = _db()
-    mirror = db.execute("SELECT v FROM meta WHERE k='mirror_root'").fetchone()
-    root = Path(mirror[0]) if mirror else None
     todo = db.execute("SELECT p.id, p.path, p.taken, p.size FROM photos p WHERE p.dup_of IS NULL AND p.id NOT IN (SELECT photo_id FROM immich_map) ORDER BY p.path").fetchall()
     if limit:
         todo = todo[:limit]
     print(f"{len(todo)} photos to upload to {_base()}", flush=True)
-    t0, sent = time.time(), 0.0
+    t0, sent, failed = time.time(), 0.0, 0
     for n, r in enumerate(todo, 1):
-        primary = os.path.join(lib.root(), r["path"])          # read from the original drive when it is plugged in (USB is faster than the Wi-Fi to the NAS)
-        src = primary if os.path.exists(primary) else (str(root / r["path"]) if root else primary)
+        src = os.path.join(lib.root(), r["path"])
+        if not os.path.exists(src):
+            if not _wait(lambda: os.path.exists(src), "the external drive"):
+                print("  giving up: the drive did not come back", flush=True)
+                break
         ts = (r["taken"] or "2000-01-01 00:00:00").replace(" ", "T")[:19] + ".000Z"
-        try:
-            status, body = _upload_one(src, f"neural-travel-{r['id']}", ts, ts, _sha1(src))
-        except Exception as e:
-            print("  ERROR", r["path"], type(e).__name__, str(e)[:80], flush=True)
-            continue
-        if status in (200, 201) and isinstance(body, dict) and body.get("id"):
-            db.execute("INSERT OR REPLACE INTO immich_map VALUES(?,?,?)", (r["id"], body["id"], "duplicate" if body.get("status") == "duplicate" else "uploaded"))
-        else:
-            print("  FAILED", r["path"], status, str(body)[:100], flush=True)
+        done = False
+        for attempt in range(6):
+            try:
+                status, body = _upload_one(src, f"neural-travel-{r['id']}", ts, ts, _sha1(src))
+                if status in (200, 201) and isinstance(body, dict) and body.get("id"):
+                    db.execute("INSERT OR REPLACE INTO immich_map VALUES(?,?,?)", (r["id"], body["id"], "duplicate" if body.get("status") == "duplicate" else "uploaded"))
+                    done = True
+                    break
+                print("  REJECTED", r["path"], status, str(body)[:100], flush=True)
+                if status in (400, 401, 403, 413, 415):
+                    break                                   # retrying will not help
+            except (OSError, http.client.HTTPException) as e:
+                print(f"  retry {attempt + 1} for {r['path']}: {type(e).__name__}", flush=True)
+                if not os.path.exists(src):
+                    _wait(lambda: os.path.exists(src), "the external drive")
+                _wait(_immich_up, "Immich")
+                time.sleep(5)
+        if not done:
+            failed += 1
         sent += r["size"] / 1e9
         if n % 25 == 0:
             db.commit()
             el = time.time() - t0
-            print(f"  {n}/{len(todo)}  {sent:.1f} GB  {sent * 1000 / el:.0f} MB/s", flush=True)
+            print(f"  {n}/{len(todo)}  {sent:.1f} GB  {sent * 1000 / el:.0f} MB/s  ({failed} failed so far)", flush=True)
     db.commit()
-    print("upload done", flush=True)
+    print(f"upload finished: {failed} photos could not be uploaded", flush=True)
 
 
 # ------------------------------------------------------------------------------------------------ albums
