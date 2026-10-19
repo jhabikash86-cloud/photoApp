@@ -6,6 +6,7 @@ taken, with what camera, which country and place, whether it is a RAW file, an e
 
 build_library.py fills the catalog (resumable). The app reads it through the functions below.
 """
+import glob
 import json
 import os
 import re
@@ -59,9 +60,17 @@ def connect() -> sqlite3.Connection:
 
 
 def root() -> str:
+    """The photo library folder on the external drive. If macOS remounted the drive under another name
+    ("Seagate Expansion Drive 1" after a USB hiccup), the same folder is found there automatically."""
     db = connect()
     r = db.execute("SELECT v FROM meta WHERE k='root'").fetchone()
-    return r["v"] if r else DEFAULT_ROOT
+    saved = r["v"] if r else DEFAULT_ROOT
+    if os.path.isdir(saved):
+        return saved
+    for cand in sorted(glob.glob(f"/Volumes/*/{os.path.basename(saved)}")):
+        if os.path.isdir(os.path.join(cand, "EuropeTrip")):
+            return cand
+    return saved
 
 
 def mirror_root() -> Optional[str]:
