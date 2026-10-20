@@ -13,6 +13,9 @@ import Histogram from './components/Histogram';
 import Slider from './components/Slider';
 import Toggle from './components/Toggle';
 import LooksPanel from './components/LooksPanel';
+import CropPanel from './components/CropPanel';
+import ExportDialog from './components/ExportDialog';
+import SyncDialog from './components/SyncDialog';
 import RegionPresetsPanel from './components/RegionPresetsPanel';
 import SkyPanel, { Suggest } from './components/SkyPanel';
 import Rail, { RAIL, TabId } from './components/Rail';
@@ -22,7 +25,7 @@ import { makeClipOverlay } from './lib/clip';
 import { GROUPS, applyGroup } from './lib/groups';
 import { instantFilter } from './lib/preview';
 import {
-  API_URL, Analysis, EditCtx, Histogram as HistData, Item, LOOKS, Params, diffCount, newLayer, setIn,
+  API_URL, Analysis, EditCtx, Histogram as HistData, Item, LOOKS, Params, diffCount, newLayer, setIn, GeometrySettings,
 } from './lib/params';
 
 const ACCEPT = '.jpg,.jpeg,.png,.webp,.heic,.heif,.tif,.tiff,.nef,.nrw,.dng,.cr2,.cr3,.crw,.arw,.sr2,.raf,.orf,.rw2,.pef,.srw,.3fr,.iiq';
@@ -306,6 +309,19 @@ export default function Editor() {
 
   const resetAll = () => active?.auto && updateParams(() => active.auto!, true, true);
 
+  const [exportOpen, setExportOpen] = useState(false);
+  const [syncOpen, setSyncOpen] = useState(false);
+  // give another open photo a finished edit (used by 'apply to all'): saved, in its history, and its preview refreshed
+  const applyToItem = useCallback(async (id: string, params: Params) => {
+    const it = itemsRef.current.find((i) => i.id === id);
+    if (!it) return;
+    patch(id, { params, strengths: undefined });
+    itemsRef.current = itemsRef.current.map((i) => (i.id === id ? { ...i, params, strengths: undefined } : i));
+    commitHistory(id);
+    fetch(`${API_URL}/api/edit`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: it.file.name, size: it.file.size, params }) }).catch(() => {});
+    await post(id, params, false).catch(() => null);
+  }, [commitHistory, patch, post]);
+
   const download = async () => {
     if (!active?.sid || !active.params) return;
     setExporting(true);
@@ -491,20 +507,28 @@ export default function Editor() {
             </div>
             <button onClick={() => step(-1)} disabled={!active || active.hIndex <= 0} title="Undo (Ctrl/⌘ Z)" className="px-3.5 py-2 rounded-lg text-base bg-zinc-800 hover:bg-zinc-700 disabled:opacity-30">↶</button>
             <button onClick={() => step(1)} disabled={!active || active.hIndex >= active.history.length - 1} title="Redo (Shift Ctrl/⌘ Z)" className="px-3.5 py-2 rounded-lg text-base bg-zinc-800 hover:bg-zinc-700 disabled:opacity-30">↷</button>
-            <button onClick={download} disabled={exporting} title="Export full-resolution JPEG (E)" className="px-5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-[13px] font-semibold disabled:opacity-50">
-              {exporting ? 'Rendering full size…' : 'Export'}
-            </button>
+            {items.filter((i) => i.status === 'ready').length > 1 && (
+              <button onClick={() => setSyncOpen(true)} title="Apply this photo's edit to the other open photos" className="px-3.5 py-2 rounded-lg text-[13px] bg-zinc-800 hover:bg-zinc-700">Sync…</button>
+            )}
+            <div className="flex">
+              <button onClick={download} disabled={exporting} title="Export full-resolution JPEG (E)" className="px-5 py-2 rounded-l-lg bg-indigo-600 hover:bg-indigo-500 text-[13px] font-semibold disabled:opacity-50">
+                {exporting ? 'Rendering full size…' : 'Export'}
+              </button>
+              <button onClick={() => setExportOpen(true)} title="Export options: web, social, print TIFF, all photos as a ZIP" className="px-2.5 py-2 rounded-r-lg border-l border-indigo-400/40 bg-indigo-600 hover:bg-indigo-500 text-[13px]" aria-label="Export options">▾</button>
+            </div>
           </>
         )}
       </header>
 
       {batchOpen && <BatchDialog onClose={() => setBatchOpen(false)} />}
+      {exportOpen && <ExportDialog items={items} activeId={activeId} onClose={() => setExportOpen(false)} />}
+      {syncOpen && active && <SyncDialog items={items} source={active} onApply={applyToItem} onClose={() => setSyncOpen(false)} flash={flash} />}
       {libraryOpen && <LibraryDialog onClose={() => setLibraryOpen(false)} onOpen={(files) => openFiles(files)} />}
       <div className="flex flex-col md:flex-row flex-1 min-h-0">
         {/* canvas + filmstrip */}
         <div className="h-[40%] md:h-auto shrink-0 md:shrink md:flex-1 min-w-0 flex flex-col relative">
-          <Canvas key={active?.id ?? 'none'} beforeUrl={beforeUrl} afterUrl={shownAfter} overlayUrl={customOverlayUrl ?? maskOverlayUrl ?? overlayUrl} clipUrl={clipUrl} toolActive={toolActive}
-            tool={toolLayer ? (geo) => (
+          <Canvas key={active?.id ?? 'none'} beforeUrl={beforeUrl} afterUrl={shownAfter} overlayUrl={p?.geometry?.enabled ? undefined : (customOverlayUrl ?? maskOverlayUrl ?? overlayUrl)} clipUrl={clipUrl} toolActive={toolActive}
+            tool={toolLayer && !p?.geometry?.enabled ? (geo) => (
               <MaskOverlay layer={toolLayer} geo={geo} brush={brush} picking={picking} onPicked={() => setPicking(false)}
                 onLayer={(fn, commit) => (toolLayer.id === '__fix'
                   ? updateParams((cur) => ({ ...cur, regions: { ...cur.regions, [selRegion]: { ...cur.regions[selRegion], strokes: fn({ ...toolLayer, strokes: cur.regions[selRegion].strokes ?? [] }).strokes } } }), !!commit, !!commit)
@@ -571,12 +595,20 @@ export default function Editor() {
               <SimplePanel ctx={ctx} ctl={{ strengths: active.strengths ?? {}, setStrength, setLightScene, busy }} />
               </>)}
 
+              {tab === 'crop' && <CropPanel key={active.sid} ctx={ctx} sid={active.sid!} />}
               {tab === 'looks' && <LooksPanel key={active.sid} ctx={ctx} suggest={suggest} />}
               {tab === 'sky' && <SkyPanel key={active.sid} ctx={ctx} suggest={suggest} onMasks={() => setTab('masks')} />}
               {tab === 'light' && <ColourGradingPanel ctx={ctx} part="light" />}
               {tab === 'colour' && <ColourGradingPanel ctx={ctx} part="colour" />}
               {tab === 'presets' && <RegionPresetsPanel ctx={ctx} onTune={(r) => { setSelRegion(r); setTab('masks'); }} />}
-              {tab === 'masks' && <MaskingPanel ctx={ctx} overlay={{ on: maskOverlayOn, setOn: setMaskOverlayOn, selected: selRegion, setSelected: setSelRegion }} maskUI={maskUI} />}
+              {tab === 'masks' && p.geometry?.enabled && (
+                <div className="space-y-3 p-4 text-xs leading-relaxed text-zinc-400">
+                  <p>Crop &amp; straighten is on. Masks are painted on the full frame, so the crop has to be off while you paint.</p>
+                  <button onClick={() => updateParams((c) => ({ ...c, geometry: { ...(c.geometry as GeometrySettings), enabled: false } }), true, true)} className="w-full rounded-lg border border-zinc-700 px-3 py-2 text-[13px] text-zinc-200 hover:bg-zinc-800">Turn the crop off for now</button>
+                  <p className="text-zinc-500">Your crop settings are kept: turn it back on in the Crop tab (pick any aspect again) when you have finished painting.</p>
+                </div>
+              )}
+              {tab === 'masks' && !p.geometry?.enabled && <MaskingPanel ctx={ctx} overlay={{ on: maskOverlayOn, setOn: setMaskOverlayOn, selected: selRegion, setSelected: setSelRegion }} maskUI={maskUI} />}
               {tab === 'curves' && <CurvesPanel ctx={ctx} hist={active.histogram} />}
               {tab === 'dodge' && <DodgeBurnPanel ctx={ctx} />}
               {tab === 'effects' && <EffectsPanel ctx={ctx} />}

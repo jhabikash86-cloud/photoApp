@@ -32,6 +32,16 @@ export default function Filmstrip({ items, activeId, onSelect, onRemove, onAdd }
             </div>
           )}
           {it.status === 'error' && <div className="absolute inset-0 bg-red-900/70 flex items-center justify-center text-[10px] text-red-100 text-center p-1">failed</div>}
+          {it.status === 'ready' && (() => {
+            const q = it.analysis?.quality;
+            if (!q) return null;
+            const tags: { t: string; tip: string }[] = [];
+            if (q.blur === 'blurry') tags.push({ t: 'blurry', tip: 'Looks out of focus or shaken: a candidate to reject' });
+            else if (q.blur === 'soft') tags.push({ t: 'soft', tip: 'A little soft: check it at 100%' });
+            if (q.exposure === 'dark') tags.push({ t: 'dark', tip: 'Very dark overall' });
+            if (q.exposure === 'bright') tags.push({ t: 'bright', tip: 'Very bright: highlights may be blown' });
+            return tags.length ? <div className="absolute left-0.5 top-0.5 flex flex-col gap-0.5">{tags.map((g) => <span key={g.t} title={g.tip} className={`rounded px-1 text-[9px] leading-[13px] ${g.t === 'blurry' ? 'bg-red-600/90 text-white' : 'bg-amber-500/90 text-black'}`}>{g.t}</span>)}</div> : null;
+          })()}
           <div className="absolute bottom-0 inset-x-0 bg-black/55 px-1 text-[9px] text-zinc-200 truncate">{it.name}</div>
           <button onClick={(e) => { e.stopPropagation(); onRemove(it.id); }} aria-label="Remove"
             className="absolute right-0.5 top-0.5 hidden group-hover:block h-4 w-4 rounded bg-black/70 text-[10px] leading-4 text-white">×</button>

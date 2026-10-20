@@ -886,6 +886,20 @@ def t_geometry(an, p) -> Result:
     return "crop & straighten: exact aspect, no empty corners, auto-straighten accurate, preview = export", bool(not bad), f"{len(checks)} checks; failed: {bad or 'none'}; " + "; ".join(notes)
 
 
+def t_cull_quality(an, p) -> Result:
+    """The blur / exposure flags used for culling: a photo reads sharper than the same photo blurred, and the summary carries the flags."""
+    import cv2
+    import engine
+    src, _, _ = engine._target(an, 1600)
+    y = (src @ np.array([0.2126, 0.7152, 0.0722], np.float32)).astype(np.float32)
+    r0 = engine._sharp_ratio(y)
+    r1 = engine._sharp_ratio(cv2.GaussianBlur(y, (0, 0), 1.5))
+    r2 = engine._sharp_ratio(cv2.GaussianBlur(y, (0, 0), 3.5))
+    q = an.summary().get("quality", {})
+    ok = r0 > r1 > r2 and r2 < 2.0 and r0 > 2.4 and q.get("blur") in ("sharp", "soft", "blurry") and q.get("exposure") in ("ok", "dark", "bright")
+    return "culling flags: sharp > mildly blurred > blurred, flags present in the analysis", bool(ok), f"sharpness ratio {r0:.2f} / blurred 1.5px {r1:.2f} / 3.5px {r2:.2f}; flags {q}"
+
+
 TESTS: List[Callable] = [
     t_mask_alignment_and_range, t_mask_operations, t_mask_controls, t_local_edit_stays_inside_mask,
     t_db_off_is_identity, t_db_highlights_and_shadows_protected, t_db_preserves_skin_texture, t_db_no_halo,
@@ -893,7 +907,7 @@ TESTS: List[Callable] = [
     t_render_size_matches_image, t_neutral_params_are_identity, t_slider_directions, t_srgb_pipeline, t_light_scene_read,
     t_custom_mask_shapes, t_gradient_and_radial_geometry, t_brush_resolution_independent, t_range_masks_select_what_they_claim,
     t_mask_limit_and_refine, t_custom_mask_edit_stays_inside, t_point_curve,
-    t_region_coverage, t_region_paint_fix, t_lut_behaviour, t_match_reference, t_banded_ops_are_exact, t_smart_looks, t_adaptive_looks, t_sky_studio, t_sky_replacement, t_sky_full_res_matte, t_drama_operations, t_drama_looks, t_white_level_and_look_scale, t_long_exposure, t_geometry,
+    t_region_coverage, t_region_paint_fix, t_lut_behaviour, t_match_reference, t_banded_ops_are_exact, t_smart_looks, t_adaptive_looks, t_sky_studio, t_sky_replacement, t_sky_full_res_matte, t_drama_operations, t_drama_looks, t_white_level_and_look_scale, t_long_exposure, t_geometry, t_cull_quality,
 ]
 
 

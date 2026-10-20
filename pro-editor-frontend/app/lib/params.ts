@@ -80,7 +80,10 @@ export type Params = {
   sky_replace?: SkyReplace;
   drama?: DramaSettings;
   longexp?: LongExposureSettings;
+  geometry?: GeometrySettings;
 };
+export type GeometrySettings = { enabled: boolean; angle: number; aspect: string; zoom: number; x: number; y: number };
+export const GEOMETRY_OFF: GeometrySettings = { enabled: false, angle: 0, aspect: 'original', zoom: 1, x: 0, y: 0 };
 export type LongExposureSettings = { enabled: boolean; water: number; water_dir: string; clouds: number; cloud_angle: number; grad_nd: number };
 export const LONGEXP_OFF: LongExposureSettings = { enabled: false, water: 0, water_dir: 'auto', clouds: 0, cloud_angle: 0, grad_nd: 0 };
 export type DramaSettings = {
@@ -110,6 +113,7 @@ export type Analysis = {
   meta?: { when: string | null; lat: number | null; lon: number | null; sun_elevation: number | null; sun_source: string; camera: string };
   mask_names?: string[];
   coverage?: Record<string, number>;
+  quality?: { blur: 'sharp' | 'soft' | 'blurry' | null; sharp_ratio: number | null; exposure: 'ok' | 'dark' | 'bright'; median: number };
   seconds: number;
 };
 export type Histogram = { r: number[]; g: number[]; b: number[]; l: number[]; clip_hi?: number; clip_lo?: number };

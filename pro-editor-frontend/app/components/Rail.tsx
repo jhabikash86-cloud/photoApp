@@ -2,13 +2,14 @@
 
 import { ReactNode } from 'react';
 
-export type TabId = 'auto' | 'light' | 'colour' | 'looks' | 'sky' | 'presets' | 'masks' | 'curves' | 'dodge' | 'effects' | 'info';
+export type TabId = 'auto' | 'crop' | 'light' | 'colour' | 'looks' | 'sky' | 'presets' | 'masks' | 'curves' | 'dodge' | 'effects' | 'info';
 
 const I = (d: ReactNode) => (
   <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">{d}</svg>
 );
 export const RAIL: { id: TabId; label: string; icon: ReactNode }[] = [
   { id: 'auto', label: 'Auto', icon: I(<><path d="M5 19 19 5" /><path d="M14 4v3M12.5 5.5h3M19 11v3M17.5 12.5h3M7 3v2M6 4h2" /></>) },
+  { id: 'crop', label: 'Crop', icon: I(<><path d="M7 3v14h14" /><path d="M3 7h14v14" /></>) },
   { id: 'light', label: 'Light', icon: I(<><circle cx="12" cy="12" r="4" /><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6 7 7M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4" /></>) },
   { id: 'colour', label: 'Colour', icon: I(<><path d="M12 3c4.5 5 6.5 7.8 6.5 10.5a6.5 6.5 0 0 1-13 0C5.5 10.8 7.5 8 12 3Z" /></>) },
   { id: 'looks', label: 'Looks', icon: I(<><rect x="3.5" y="5" width="17" height="14" rx="2.5" /><path d="M3.5 15 9 10l4 4 2.5-2 5 4.5" /></>) },

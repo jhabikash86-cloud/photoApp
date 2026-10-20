@@ -102,6 +102,10 @@ class Analysis:
             s["meta"] = self.meta.summary()
         s["mask_names"] = self.bank.names() if self.bank else []
         s["coverage"] = self.coverage
+        st = self.stats
+        r, med, clip = st.get("sharp_ratio"), st.get("median", 0.45), st.get("clip_hi", 0.0)
+        s["quality"] = {"blur": None if r is None else ("sharp" if r >= 3.0 else "soft" if r >= 2.0 else "blurry"), "sharp_ratio": None if r is None else round(r, 2),
+                        "exposure": "dark" if med < 0.16 else "bright" if (med > 0.78 or clip > 0.10) else "ok", "median": round(med, 2)}
         s["seconds"] = round(self.secs, 1)
         return s
 
@@ -114,6 +118,19 @@ def _resize(a: np.ndarray, size) -> np.ndarray:
     if a.shape[1] == w and a.shape[0] == h:
         return a
     return cv2.resize(a, (w, h), interpolation=cv2.INTER_AREA if w < a.shape[1] else cv2.INTER_CUBIC)
+
+
+def _sharp_ratio(y: np.ndarray) -> float:
+    """How much of the finest detail is real: the picture's best-focused tiles keep their high-frequency energy ONLY when it is sharp; a blurred
+    picture has little to lose when blurred a little more. >=3 sharp, 2-3 soft, <2 blurry (calibrated on sharp and deliberately blurred photos)."""
+    def tiles(a):
+        lap = cv2.Laplacian(a, cv2.CV_32F, ksize=3)
+        h, w = a.shape
+        t = cv2.resize(lap * lap, (max(4, w // 20), max(4, h // 20)), interpolation=cv2.INTER_AREA)
+        return float(np.sqrt(np.percentile(t, 92)))
+    a = tiles(y)
+    b = tiles(cv2.GaussianBlur(y, (0, 0), 1.2))
+    return a / max(b, 1e-5)
 
 
 def _snap(work, prob, thr=(0.35, 0.4)):
@@ -245,6 +262,12 @@ def analyze(path: str, sid: Optional[str] = None) -> Analysis:
     if sm is not None and (sm > 0.6).sum() > 200:
         stats["skin_luma"] = float(np.median((work @ LUMA)[sm > 0.6]))
     yy = work @ LUMA
+    try:
+        stats["sharp_ratio"] = _sharp_ratio(yy.astype(np.float32))
+    except Exception:
+        pass
+    stats["median"] = float(np.median(yy))
+    stats["clip_hi"] = float((work.max(axis=2) > 0.995).mean())
     stats["dark_share"] = float((yy < 0.18).mean())       # how much of the frame is deep shadow / dark backdrop
     pm = mdict.get("person")
     if pm is not None and (pm > 0.6).any():
