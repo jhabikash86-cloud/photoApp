@@ -890,6 +890,8 @@ def _render(an: Analysis, p: EditParams, edge: Optional[int], draft: bool) -> ad
 
     result = np.clip(src0 + (np.clip(out, 0, 1) - src0) * p.intensity, 0, 1)
     img = adjust.to_image(result)
+    if full_res:                                                   # hand the big float pictures back before the last (8-bit) step: a 48 MP float picture is 580 MB
+        result = out = src0 = src = arr_wb = arr_g = cb = None
     return img if draft else adjust.sharpen_image(img, e.sharpen * min(1.0, p.intensity))
 
 

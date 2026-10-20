@@ -47,6 +47,7 @@ class Scene:
     low_key: float = 0.0
     median: float = 0.45
     sky_luma: float = 0.0                # mean brightness of the sky in the ORIGINAL (a bright flat veil needs modelling)
+    leaf_warm: float = 0.0               # share of the TREE pixels that are warm-coloured (autumn leaves), not just warm anywhere
     sun_xy: Tuple[float, float] = (-1.0, -1.0)
     sun: float = 0.0                     # 1 if a sun / lamp is found
     white: float = 0.0                   # brightest level of the ORIGINAL picture (99.5th percentile of luminance)
@@ -99,6 +100,12 @@ def _read_scene(an) -> Scene:
     s.cast, s.cast_hue = float(np.hypot(ca, cb)), float(np.degrees(np.arctan2(cb, ca)) % 360)
     s.neutral = float((C < 9).mean())
     s.bright_grey = float(((y > 0.62) & (C < 14)).mean())
+    tm = an.masks.get('trees') if getattr(an, 'masks', None) else None
+    if tm is not None:
+        tmm = cv2.resize(np.asarray(tm, np.float32), (y.shape[1], y.shape[0]), interpolation=cv2.INTER_LINEAR) > 0.5
+        if tmm.sum() > 300:
+            hue_ = (np.degrees(np.arctan2(lab[..., 2], lab[..., 1])) % 360)
+            s.leaf_warm = float((((hue_ > 25) & (hue_ < 110) & (C > 10)) & tmm).sum() / tmm.sum())
     sk0 = an.masks.get('sky') if getattr(an, 'masks', None) else None
     notsky = np.ones(y.shape, bool)
     if sk0 is not None:
@@ -168,6 +175,7 @@ class Variant:
     depth_haze: float = 25
     glow: float = 30
     rays: float = 0
+    mixer: Dict[str, Tuple[float, float, float]] = field(default_factory=dict)      # HSL mixer nudges (hue, saturation, luminance) per colour
 
 
 # global style knobs, tuned against real pro before/after pairs (see tune_drama.py)
@@ -199,6 +207,11 @@ VARIANTS: Dict[str, Variant] = {v.id: v for v in [
             ((290, 14), (282, 20), (275, 8)), 255, Feel(-0.1, 0.7, 0.9, 0.4, 0.5),
             dict(contrast=10, highlights=-24, shadows=10, blacks=-8, whites=-2, exposure=-6), -28, mood=75, protect=65, enrich=45, sky_burn=45, sky_texture=80, bloom=25, mist=15,
             sky_hue=278, sky_chroma=28, sky_colour=70, glow=20, rays=10, sky_model=70),
+    Variant("autumn_gold", "Autumn Gold", "Amber and copper foliage glowing against cool, shaded shadows; greens turned olive-gold, a hint of forest mist",
+            ((215, 10), (62, 24), (72, 32)), 70, Feel(0.8, 0.5, 0.7, 0.5, 0.4),
+            dict(contrast=10, highlights=-18, shadows=10, blacks=-8, whites=0, exposure=-3), -28, mood=72, protect=72, enrich=45, sky_burn=45, sky_texture=45,
+            sky_colour=30, bloom=40, mist=40, detail=62, sky_hue=60, sky_chroma=0, glow=40, rays=25, sky_model=30,
+            mixer={"orange": (0.0, 14.0, 4.0), "yellow": (-6.0, 12.0, 3.0), "red": (0.0, 10.0, 0.0), "green": (-14.0, -6.0, -2.0)}),
     Variant("lush_valley", "Lush Valley", "Vivid layered greens under a warm orange sky, haze deepening the distance",
             ((130, 16), (118, 30), (92, 30)), 70, Feel(0.6, 0.4, 0.9, 0.9, 0.3),
             dict(contrast=8, highlights=-20, shadows=10, blacks=-8, whites=-2, exposure=-6), -22, mood=55, protect=90, enrich=60, sky_burn=35, sky_texture=45, bloom=45, mist=45, detail=75,
@@ -276,6 +289,9 @@ def score(v: Variant, s: Scene) -> Tuple[float, str]:
         if s.depth_range > 0.45 or s.haze > 0.2: add(0.18, "layers of distance and haze")
         if fol < 0.1: sc -= 0.35                                      # 'lush' needs real green
         if lt in ("sunset", "golden_hour"): add(0.15, "warm low light")
+    autumn = s.trees > 0.15 and s.leaf_warm > 0.28 and s.warm > 0.2 and s.snow < 0.15
+    if v.id == 'autumn_gold' and autumn: add(0.5 + 0.2 * min(1.0, s.warm), 'foliage turning gold: amber and copper glow')
+    if v.id == 'autumn_gold' and not autumn: sc -= 0.25
     if s.trees > 0.3 and s.warm > 0.22 and s.green < 0.65:                # autumn-like foliage: keep the warmth, do not cool it
         if v.id in ('golden_glow', 'lush_valley', 'teal_orange'): add(0.14, 'foliage turning gold')
         if v.id in ('blue_hour', 'moody_silver'): sc -= 0.12
@@ -344,7 +360,7 @@ def build(an, base: EditParams, vid: str, strength: float = 1.0) -> Tuple[EditPa
     if s.median > 0.5:
         basic["exposure"] = min(0.0, basic.get("exposure", 0.0) * max(0.0, 1.0 - (s.median - 0.5) * 6))
         basic["highlights"] = basic.get("highlights", 0.0) * 0.6
-    look = Look(id=f"drama_{v.id}", label=v.label, result=v.blurb, adjusts=v.blurb, feel=feel, basic=basic, wheels={}, mixer={}, curve={}, vignette=a["vignette"])
+    look = Look(id=f"drama_{v.id}", label=v.label, result=v.blurb, adjusts=v.blurb, feel=feel, basic=basic, wheels={}, mixer=dict(v.mixer), curve={}, vignette=a["vignette"])
     p, lnotes, facts = look_engine.build(an, base, look, strength)
     p.basic.highlights = max(p.basic.highlights, -26.0)      # a gentler, more basic starting point: Drama and the white anchor do the light, the sliders do not crush it
     p.basic.shadows = min(p.basic.shadows, 26.0)
