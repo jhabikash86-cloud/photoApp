@@ -15,6 +15,7 @@ export default function BatchDialog({ onClose }: { onClose: () => void }) {
   const [albumId, setAlbumId] = useState('');
   const [look, setLook] = useState('auto');
   const [limit, setLimit] = useState('');
+  const [straighten, setStraighten] = useState(true);
   const [job, setJob] = useState<Job | null>(null);
   const [error, setError] = useState('');
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -42,7 +43,7 @@ export default function BatchDialog({ onClose }: { onClose: () => void }) {
     setError('');
     const res = await fetch(`${API_URL}/api/immich/batch`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ album_id: albumId, look, limit: limit ? parseInt(limit, 10) : null }),
+      body: JSON.stringify({ album_id: albumId, look, limit: limit ? parseInt(limit, 10) : null, straighten }),
     });
     const d = await res.json().catch(() => ({}));
     if (!res.ok) { setError(d.detail || 'Could not start'); return; }
@@ -74,9 +75,11 @@ export default function BatchDialog({ onClose }: { onClose: () => void }) {
             </label>
             <label className="block text-xs text-zinc-400">Look
               <select value={look} onChange={(e) => setLook(e.target.value)} className="mt-1 w-full bg-zinc-800 rounded px-2 py-1.5 text-zinc-100">
+                <option value="drama_auto">✨ Scene-adaptive Drama — the best-fitting look for each photo</option>
                 {LOOKS.map((l) => <option key={l.id} value={l.id}>{l.label} — {l.hint}</option>)}
               </select>
             </label>
+            <label className="flex items-center gap-2 text-xs text-zinc-300"><input type="checkbox" checked={straighten} onChange={(e) => setStraighten(e.target.checked)} /> Level crooked horizons automatically (only when the horizon is clear)</label>
             <label className="block text-xs text-zinc-400">Only the first N photos (optional, good for a trial)
               <input value={limit} onChange={(e) => setLimit(e.target.value.replace(/\D/g, ''))} placeholder="all" className="mt-1 w-full bg-zinc-800 rounded px-2 py-1.5 text-zinc-100" />
             </label>

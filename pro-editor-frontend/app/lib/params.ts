@@ -113,7 +113,7 @@ export type Analysis = {
   meta?: { when: string | null; lat: number | null; lon: number | null; sun_elevation: number | null; sun_source: string; camera: string };
   mask_names?: string[];
   coverage?: Record<string, number>;
-  quality?: { blur: 'sharp' | 'soft' | 'blurry' | null; sharp_ratio: number | null; exposure: 'ok' | 'dark' | 'bright'; median: number };
+  quality?: { blur: 'sharp' | 'soft' | 'blurry' | null; sharp_ratio: number | null; dhash?: string | null; exposure: 'ok' | 'dark' | 'bright'; median: number };
   seconds: number;
 };
 export type Histogram = { r: number[]; g: number[]; b: number[]; l: number[]; clip_hi?: number; clip_lo?: number };

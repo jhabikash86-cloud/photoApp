@@ -93,7 +93,7 @@ JOBS: Dict[str, dict] = {}
 _job_lock = threading.Lock()
 
 
-def start_batch(album_id: str, look: str, limit: Optional[int] = None) -> str:
+def start_batch(album_id: str, look: str, limit: Optional[int] = None, straighten: bool = False) -> str:
     albums = {a["id"]: a for a in list_albums()}
     if album_id not in albums:
         raise ValueError("Unknown album")
@@ -102,11 +102,11 @@ def start_batch(album_id: str, look: str, limit: Optional[int] = None) -> str:
                current="", errors=[], edited_album_id=None, cancel=False, started=time.time())
     with _job_lock:
         JOBS[job_id] = job
-    threading.Thread(target=_run, args=(job, album_id, look, limit), daemon=True).start()
+    threading.Thread(target=_run, args=(job, album_id, look, limit, straighten), daemon=True).start()
     return job_id
 
 
-def _run(job: dict, album_id: str, look: str, limit: Optional[int]):
+def _run(job: dict, album_id: str, look: str, limit: Optional[int], straighten: bool = False):
     try:
         assets = [a for a in album_images(album_id) if "-edited" not in a.get("originalFileName", "").lower()]
         if limit:
@@ -127,7 +127,19 @@ def _run(job: dict, album_id: str, look: str, limit: Optional[int]):
                     raise RuntimeError(f"download failed ({st})")
                 src_path.write_bytes(data)
                 an = engine.analyze(str(src_path))
-                params = engine.auto_params(an, look)
+                if look == "drama_auto":                      # the Drama look that best fits THIS photo's scene
+                    import drama_looks
+                    base = engine.auto_params(an, "auto")
+                    params, _, _ = drama_looks.build(an, base, drama_looks.generate(an)[0]["id"], 1.0)
+                else:
+                    params = engine.auto_params(an, look)
+                if straighten:                                # level the horizon when it is clear enough
+                    import geometry
+                    from params import Geometry
+                    sv, size, _ = engine._target(an, 900)
+                    g = geometry.auto_angle(sv, dict(engine._masks_at(an, size)))
+                    if abs(g["angle"]) >= 0.4 and g["confidence"] >= 0.4:
+                        params.geometry = Geometry(enabled=True, angle=float(g["angle"]))
                 img = engine.render(an, params, None)
                 adjust.save(img, adjust.load(str(src_path), 64), str(out_path))
                 st, up = upload_image(str(out_path), f"{Path(name).stem}-edited.jpg",

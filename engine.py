@@ -105,7 +105,7 @@ class Analysis:
         st = self.stats
         r, med, clip = st.get("sharp_ratio"), st.get("median", 0.45), st.get("clip_hi", 0.0)
         s["quality"] = {"blur": None if r is None else ("sharp" if r >= 3.0 else "soft" if r >= 2.0 else "blurry"), "sharp_ratio": None if r is None else round(r, 2),
-                        "exposure": "dark" if med < 0.16 else "bright" if (med > 0.78 or clip > 0.10) else "ok", "median": round(med, 2)}
+                        "dhash": st.get("dhash"), "exposure": "dark" if med < 0.16 else "bright" if (med > 0.78 or clip > 0.10) else "ok", "median": round(med, 2)}
         s["seconds"] = round(self.secs, 1)
         return s
 
@@ -118,6 +118,13 @@ def _resize(a: np.ndarray, size) -> np.ndarray:
     if a.shape[1] == w and a.shape[0] == h:
         return a
     return cv2.resize(a, (w, h), interpolation=cv2.INTER_AREA if w < a.shape[1] else cv2.INTER_CUBIC)
+
+
+def _dhash(y: np.ndarray) -> str:
+    """A 64-bit fingerprint of the picture (differences between neighbouring pixels of a 9x8 thumbnail): two shots of the same scene differ in a few bits."""
+    small = cv2.resize(y, (9, 8), interpolation=cv2.INTER_AREA)
+    bits = (small[:, 1:] > small[:, :-1]).flatten()
+    return f"{int(''.join('1' if b else '0' for b in bits), 2):016x}"
 
 
 def _sharp_ratio(y: np.ndarray) -> float:
@@ -267,6 +274,7 @@ def analyze(path: str, sid: Optional[str] = None) -> Analysis:
     except Exception:
         pass
     stats["median"] = float(np.median(yy))
+    stats["dhash"] = _dhash(yy.astype(np.float32))
     stats["clip_hi"] = float((work.max(axis=2) > 0.995).mean())
     stats["dark_share"] = float((yy < 0.18).mean())       # how much of the frame is deep shadow / dark backdrop
     pm = mdict.get("person")

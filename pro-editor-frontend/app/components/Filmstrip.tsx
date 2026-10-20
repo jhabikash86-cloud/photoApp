@@ -10,7 +10,28 @@ type Props = {
   onAdd: () => void;
 };
 
+const ham = (a: string, b: string) => {
+  let x = BigInt('0x' + a) ^ BigInt('0x' + b), n = 0;
+  while (x) { n += Number(x & BigInt(1)); x >>= BigInt(1); }
+  return n;
+};
+
+/** Photos that are near-copies of an earlier, equally sharp or sharper shot: the loser of each pair gets a 'duplicate' flag. */
+function duplicates(items: Item[]): Set<string> {
+  const out = new Set<string>();
+  const ready = items.filter((i) => i.status === 'ready' && i.analysis?.quality?.dhash);
+  for (let i = 0; i < ready.length; i++) for (let j = i + 1; j < ready.length; j++) {
+    const a = ready[i], b = ready[j];
+    if (ham(a.analysis!.quality!.dhash!, b.analysis!.quality!.dhash!) <= 5) {
+      const sa = a.analysis!.quality!.sharp_ratio ?? 0, sb = b.analysis!.quality!.sharp_ratio ?? 0;
+      out.add(sa >= sb ? b.id : a.id);
+    }
+  }
+  return out;
+}
+
 export default function Filmstrip({ items, activeId, onSelect, onRemove, onAdd }: Props) {
+  const dups = duplicates(items);
   return (
     <div className="h-[92px] shrink-0 border-t border-zinc-800 bg-[#18181b] flex items-center gap-2 px-3 overflow-x-auto">
       {items.map((it) => (
@@ -38,6 +59,7 @@ export default function Filmstrip({ items, activeId, onSelect, onRemove, onAdd }
             const tags: { t: string; tip: string }[] = [];
             if (q.blur === 'blurry') tags.push({ t: 'blurry', tip: 'Looks out of focus or shaken: a candidate to reject' });
             else if (q.blur === 'soft') tags.push({ t: 'soft', tip: 'A little soft: check it at 100%' });
+            if (dups.has(it.id)) tags.push({ t: 'duplicate', tip: 'Nearly the same picture as another open photo, and not the sharper one' });
             if (q.exposure === 'dark') tags.push({ t: 'dark', tip: 'Very dark overall' });
             if (q.exposure === 'bright') tags.push({ t: 'bright', tip: 'Very bright: highlights may be blown' });
             return tags.length ? <div className="absolute left-0.5 top-0.5 flex flex-col gap-0.5">{tags.map((g) => <span key={g.t} title={g.tip} className={`rounded px-1 text-[9px] leading-[13px] ${g.t === 'blurry' ? 'bg-red-600/90 text-white' : 'bg-amber-500/90 text-black'}`}>{g.t}</span>)}</div> : null;

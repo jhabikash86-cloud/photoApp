@@ -448,16 +448,17 @@ class BatchRequest(BaseModel):
     album_id: str
     look: str = "auto"
     limit: Optional[int] = None
+    straighten: bool = False
 
 
 @app.post("/api/immich/batch")
 def immich_batch(req: BatchRequest):
     if not immich.configured():
         raise HTTPException(400, "Immich is not configured (set IMMICH_URL and IMMICH_API_KEY in .env).")
-    if req.look != "auto" and req.look not in engine.LOOKS:
+    if req.look not in ("auto", "drama_auto") and req.look not in engine.LOOKS:
         raise HTTPException(400, f"Unknown look '{req.look}'.")
     try:
-        return {"job_id": immich.start_batch(req.album_id, req.look, req.limit)}
+        return {"job_id": immich.start_batch(req.album_id, req.look, req.limit, req.straighten)}
     except ValueError as e:
         raise HTTPException(400, str(e))
     except Exception as e:
