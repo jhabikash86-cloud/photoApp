@@ -611,7 +611,7 @@ export default function Editor() {
               {tab === 'masks' && !p.geometry?.enabled && <MaskingPanel ctx={ctx} overlay={{ on: maskOverlayOn, setOn: setMaskOverlayOn, selected: selRegion, setSelected: setSelRegion }} maskUI={maskUI} />}
               {tab === 'curves' && <CurvesPanel ctx={ctx} hist={active.histogram} />}
               {tab === 'dodge' && <DodgeBurnPanel ctx={ctx} />}
-              {tab === 'effects' && <EffectsPanel ctx={ctx} />}
+              {tab === 'effects' && <EffectsPanel ctx={ctx} sid={active.sid} />}
               {tab === 'info' && (
                 <Sub title="Analysis">
                   <div className="text-[11px] space-y-1 text-zinc-400">

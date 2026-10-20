@@ -900,6 +900,48 @@ def t_cull_quality(an, p) -> Result:
     return "culling flags: sharp > mildly blurred > blurred, flags present in the analysis", bool(ok), f"sharpness ratio {r0:.2f} / blurred 1.5px {r1:.2f} / 3.5px {r2:.2f}; flags {q}"
 
 
+def t_dust_spots(an, p) -> Result:
+    """Sensor dust in a clear sky is removed; a bird, a cloud and anything outside the sky are left alone; nothing else changes."""
+    import cv2
+    import spots
+    rng = np.random.default_rng(2)
+    h, w = 1000, 1500
+    gy = np.linspace(0, 1, h)[:, None]
+    sky = np.zeros((h, w, 3), np.float32)
+    sky[..., 0], sky[..., 1], sky[..., 2] = 0.35 + 0.15 * gy, 0.55 + 0.15 * gy, 0.9 - 0.1 * gy
+    img = np.clip(sky + rng.normal(0, 0.004, sky.shape).astype(np.float32), 0, 1)
+    mask = np.zeros((h, w), np.float32)
+    mask[:800] = 1
+    yy, xx = np.mgrid[:h, :w]
+    truth = ((300, 200, 10, 0.05), (700, 350, 6, 0.07), (1100, 150, 14, 0.04), (450, 550, 4, 0.06), (900, 600, 8, 0.05), (1300, 420, 12, 0.045))
+    for cx, cy, r, c in truth:
+        img -= c * (np.clip(1 - (np.hypot(xx - cx, yy - cy) / r) ** 2, 0, 1) ** 0.8)[..., None]
+    bird = np.zeros((h, w), np.uint8)
+    cv2.ellipse(bird, (1000, 300), (7, 3), 20, 0, 360, 1, -1)
+    img[bird > 0] = 0.12
+    cl = np.zeros((h, w), np.float32)
+    cv2.circle(cl, (500, 100), 80, 1, -1)
+    cl = cv2.GaussianBlur(cl, (0, 0), 25)
+    img = img * (1 - 0.8 * cl[..., None]) + 0.95 * 0.8 * cl[..., None]
+    img[850:900, 200:250] -= 0.05                                   # a dark patch on the land
+    img = np.clip(img, 0, 1)
+    out, n = spots.clean(img, {"sky": mask}, 60)
+    left = [float((sky - out).mean(2)[np.hypot(xx - cx, yy - cy) < r * 0.8].mean()) for cx, cy, r, c in truth]
+    before = [float((sky - img).mean(2)[np.hypot(xx - cx, yy - cy) < r * 0.8].mean()) for cx, cy, r, c in truth]
+    far = np.ones((h, w), bool)
+    for cx, cy, r, c in truth:
+        far &= np.hypot(xx - cx, yy - cy) > r * 5
+    checks = {
+        "finds the dust (6 of 6)": n == 6,
+        "each spot is mostly gone": all(l < 0.3 * b for l, b in zip(left, before)),
+        "the bird is untouched": float(np.abs(out - img)[bird > 0].max()) < 1e-6,
+        "nothing else changes (cloud, land, clear sky)": float(np.abs(out - img)[far].max()) < 1e-6,
+        "off changes nothing": spots.clean(img, {"sky": mask}, 0)[0] is img,
+    }
+    bad = [k for k, v in checks.items() if not v]
+    return "dust spots: found and removed from the sky, birds / clouds / land left alone", bool(not bad), f"found {n}; failed: {bad or 'none'}; darkness left {[round(x, 4) for x in left]}"
+
+
 TESTS: List[Callable] = [
     t_mask_alignment_and_range, t_mask_operations, t_mask_controls, t_local_edit_stays_inside_mask,
     t_db_off_is_identity, t_db_highlights_and_shadows_protected, t_db_preserves_skin_texture, t_db_no_halo,
@@ -907,7 +949,7 @@ TESTS: List[Callable] = [
     t_render_size_matches_image, t_neutral_params_are_identity, t_slider_directions, t_srgb_pipeline, t_light_scene_read,
     t_custom_mask_shapes, t_gradient_and_radial_geometry, t_brush_resolution_independent, t_range_masks_select_what_they_claim,
     t_mask_limit_and_refine, t_custom_mask_edit_stays_inside, t_point_curve,
-    t_region_coverage, t_region_paint_fix, t_lut_behaviour, t_match_reference, t_banded_ops_are_exact, t_smart_looks, t_adaptive_looks, t_sky_studio, t_sky_replacement, t_sky_full_res_matte, t_drama_operations, t_drama_looks, t_white_level_and_look_scale, t_long_exposure, t_geometry, t_cull_quality,
+    t_region_coverage, t_region_paint_fix, t_lut_behaviour, t_match_reference, t_banded_ops_are_exact, t_smart_looks, t_adaptive_looks, t_sky_studio, t_sky_replacement, t_sky_full_res_matte, t_drama_operations, t_drama_looks, t_white_level_and_look_scale, t_long_exposure, t_geometry, t_cull_quality, t_dust_spots,
 ]
 
 

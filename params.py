@@ -207,6 +207,7 @@ class Effects(BaseModel):
     denoise: float = Field(0, ge=0, le=100)          # luminance noise reduction
     denoise_color: float = Field(0, ge=0, le=100)    # colour (chroma) noise reduction
     bokeh_focus: float = Field(50, ge=0, le=100)     # depth of the in-focus zone around the subject
+    dust: float = Field(0, ge=0, le=100)             # clean sensor-dust spots in the sky (0 = off; higher also catches fainter ones)
 
 
 class DodgeBurn(BaseModel):

@@ -25,6 +25,7 @@ import denoise
 import drama
 import geometry
 import longexp
+import spots
 import luts
 import sky_replace
 import depth as depthmod
@@ -785,6 +786,10 @@ def _render(an: Analysis, p: EditParams, edge: Optional[int], draft: bool, float
             m["sky"] = sky_override                               # later stages follow the cleaned sky edge
     faces = _faces_at(an, scale)
     ck = (edge, size) + ((_js(sr),) if sky_override is not None else ())     # every cached stage depends on which sky is in the picture
+    if p.effects.dust > 0 and "sky" in m:                          # sensor dust first: a cloud streak or a blur would smear the spots instead of removing them
+        _src_d = src
+        src = _memo(an, ("dust", round(p.effects.dust)) + ck, lambda: spots.clean(_src_d, m, p.effects.dust)[0])
+        ck = ck + (("dust", round(p.effects.dust)),)
     if longexp.active(p.longexp):                                  # slow-shutter / ND look: water, clouds and a graduated sky, before any tone or detail step
         _src_le = src
         src = _memo(an, ("longexp", _js(p.longexp)) + ck, lambda: longexp.apply(_src_le, m, p.longexp))

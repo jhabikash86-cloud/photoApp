@@ -1,13 +1,13 @@
 'use client';
 
-import { ReactNode, useState } from 'react';
+import { ReactNode, useEffect, useState } from 'react';
 import PSlider from './PSlider';
 import Slider from './Slider';
 import Toggle from './Toggle';
 import { GROUPS, groupActive, groupStrength } from '../lib/groups';
 import CurveEditor from './CurveEditor';
 import { BrushCfg } from './MaskOverlay';
-import {
+import { API_URL,
   CURVE_SLIDERS, EditCtx, Histogram as HistData, MaskKind, MaskLayer, ToneCurve, newLayer, ZERO_ADJ, MIXER_COLORS, MIXER_SWATCH, PEOPLE_SLIDERS, PRESENCE, REGION_COLORS, REGION_LABELS,
   REGION_SLIDERS, TONE, WB_LABELS, diffCount, SliderDef,
 } from '../lib/params';
@@ -263,8 +263,15 @@ export function DodgeBurnPanel({ ctx }: { ctx: EditCtx }) {
 }
 
 // ------------------------------------------------------------------------------------------------ effects, detail, noise
-export function EffectsPanel({ ctx }: { ctx: EditCtx }) {
+export function EffectsPanel({ ctx, sid }: { ctx: EditCtx; sid?: string }) {
   const { p, auto } = ctx;
+  const [dust, setDust] = useState<number | null>(null);
+  useEffect(() => {
+    if (!sid) return;
+    let live = true;
+    fetch(`${API_URL}/api/dust/${sid}`).then((r) => r.json()).then((d) => { if (live && typeof d.count === 'number') setDust(d.count); }).catch(() => {});
+    return () => { live = false; };
+  }, [sid]);
   const e = (key: string, label: string, min = 0, max = 100): SliderDef => ({ key, label, min, max });
   const needs = !ctx.hasPerson;
   return (
@@ -280,6 +287,10 @@ export function EffectsPanel({ ctx }: { ctx: EditCtx }) {
         <PSlider ctx={ctx} path={['effects', 'vignette']} def={e('vignette', 'Vignette', -100, 100)} />
         <PSlider ctx={ctx} path={['effects', 'vignette_mid']} def={e('vignette_mid', 'Vignette midpoint')} />
         <PSlider ctx={ctx} path={['effects', 'grain']} def={e('grain', 'Grain')} />
+      </Sub>
+      <Sub title="Sensor dust (sky)">
+        <PSlider ctx={ctx} path={['effects', 'dust']} def={e('dust', 'Clean dust spots')} disabled={dust === 0} />
+        <p className="text-[11px] leading-snug text-zinc-500">{dust === null ? 'Looking for dust spots in the sky…' : dust === 0 ? 'No dust spots found in the sky.' : `${dust} faint round spot${dust === 1 ? '' : 's'} found in the sky. Birds, planes and clouds are left alone.`}</p>
       </Sub>
       <Sub title="Detail & noise">
         <PSlider ctx={ctx} path={['effects', 'sharpen']} def={e('sharpen', 'Sharpening', 0, 150)} />

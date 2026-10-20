@@ -414,6 +414,19 @@ def export_cancel(job_id: str):
     return {"ok": True}
 
 
+@app.get("/api/dust/{sid}")
+def dust_count(sid: str):
+    """How many sensor-dust spots were found in the sky (to offer the clean-up)."""
+    import spots
+    an = _session(sid)
+    with LOCKS[sid]:
+        src, size, _ = engine._target(an, 1400)
+        m = engine._masks_at(an, size)
+        if "sky" not in m:
+            return {"count": 0}
+        return {"count": len(spots.detect(src, m["sky"], 60.0))}
+
+
 @app.get("/api/geometry/{sid}")
 def geometry_suggest(sid: str):
     """How much to rotate to level the photo (from the horizon, else from strong straight lines)."""
