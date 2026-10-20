@@ -297,7 +297,8 @@ def _mist(arr: np.ndarray, sky: Optional[np.ndarray], depth: Optional[np.ndarray
         rng = np.random.default_rng(11)
         n = cv2.GaussianBlur(rng.random((max(8, h // 8), max(8, w // 8))).astype(np.float32), (0, 0), 3)
         n = cv2.resize((n - n.min()) / (np.ptp(n) + 1e-6), (w, h), interpolation=cv2.INTER_CUBIC)
-        a = (band * (0.6 + 0.4 * n) * amt * 0.6)[..., None]
+        dark = np.clip(((out @ LUMA) - 0.07) / 0.20, 0, 1)                   # no luminous haze over very dark near objects (a tree in front of the horizon)
+        a = (band * (0.6 + 0.4 * n) * amt * 0.6 * dark)[..., None]
         out = out * (1 - a) + col * a
     dh = d.depth_haze / 100.0 * k
     if depth is not None and dh > 0:
