@@ -787,6 +787,55 @@ def t_white_level_and_look_scale(an, p) -> Result:
         f"brightest tone original {q0:.2f} -> auto {q1:.2f}; look 320px vs 960px differs by {diff:.3f}"
 
 
+def t_long_exposure(an, p) -> Result:
+    """Long exposure: off changes nothing; silky water only changes water and removes ripple detail; cloud streaks and the graduated ND stay in the sky;
+    the ND is stronger at the top than at the horizon; preview and larger size look alike."""
+    import cv2
+    import engine
+    import longexp
+    from params import LongExposure
+    src, size, _ = engine._target(an, 700)
+    m = engine._masks_at(an, size)
+    checks, notes = {}, []
+    off = longexp.apply(src, m, LongExposure())
+    checks["off changes nothing"] = off is src or float(np.abs(off - src).max()) < 1e-6
+    hp = lambda a: float(np.std(_luma(a) - cv2.GaussianBlur(_luma(a), (0, 0), 1.6)))
+    water = m.get("water")
+    if water is not None and (water > 0.5).mean() > 0.04:
+        o = longexp.apply(src, m, LongExposure(enabled=True, water=70))
+        wm = water > 0.9
+        far = cv2.dilate((water > 0.02).astype(np.uint8), np.ones((15, 15), np.uint8)) == 0
+        before, after = hp(src * wm[..., None]), hp(o * wm[..., None])
+        checks["water ripple detail drops"] = after < 0.8 * before
+        checks["nothing outside the water changes"] = float(np.abs(o - src)[far].max()) < 0.01 if far.sum() > 100 else True
+        notes.append(f"water detail {before:.3f}->{after:.3f}")
+    sky = m.get("sky")
+    if sky is not None and (sky > 0.5).mean() > 0.06:
+        r = max(3, int(round(0.012 * max(sky.shape)))) * 3
+        far = cv2.dilate((sky > 0.02).astype(np.uint8), cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * r + 1, 2 * r + 1))) == 0
+        for what, le in (("cloud streaks", LongExposure(enabled=True, clouds=80)), ("graduated ND", LongExposure(enabled=True, grad_nd=80))):
+            o = longexp.apply(src, m, le)
+            checks[f"{what} stay in the sky"] = float(np.abs(o - src)[far].max()) < 0.012 if far.sum() > 100 else True
+            cloudy = hp(src * (sky > 0.9)[..., None]) > 0.02                    # a clear sky has nothing to streak
+            checks[f"{what} change the sky"] = (not cloudy and what == "cloud streaks") or float(np.abs(o - src)[sky > 0.9].mean()) > 0.002
+        o = longexp.apply(src, m, LongExposure(enabled=True, grad_nd=100))
+        rows = np.nonzero(sky > 0.5)[0]
+        top, bot = int(np.percentile(rows, 5)), int(np.percentile(rows, 90))
+        dtop = float((_luma(src) - _luma(o))[max(0, top - 3):top + 8][sky[max(0, top - 3):top + 8] > 0.9].mean())
+        dbot = float((_luma(src) - _luma(o))[bot - 8:bot][sky[bot - 8:bot] > 0.9].mean()) if (sky[bot - 8:bot] > 0.9).any() else 0.0
+        checks["the ND is stronger at the top than at the horizon"] = dtop > dbot
+        notes.append(f"ND darkening top {dtop:.3f} / horizon {dbot:.3f}")
+    if len(checks) > 1:
+        p2 = p.model_copy(deep=True)
+        p2.longexp = LongExposure(enabled=True, water=70, clouds=60, grad_nd=60)
+        small, big = _render_arr(an, p2, 320), _render_arr(an, p2, 900)
+        d = float(np.abs(small - cv2.resize(big, (small.shape[1], small.shape[0]), interpolation=cv2.INTER_AREA)).mean())
+        checks["preview and larger size look alike"] = d < 0.04
+        notes.append(f"320 vs 900 px differ {d:.3f}")
+    bad = [k for k, v in checks.items() if not v]
+    return "long exposure: region-limited, silky water, streaked clouds, graduated ND, size independent", bool(not bad), f"{len(checks)} checks; failed: {bad or 'none'}; " + "; ".join(notes)
+
+
 TESTS: List[Callable] = [
     t_mask_alignment_and_range, t_mask_operations, t_mask_controls, t_local_edit_stays_inside_mask,
     t_db_off_is_identity, t_db_highlights_and_shadows_protected, t_db_preserves_skin_texture, t_db_no_halo,
@@ -794,7 +843,7 @@ TESTS: List[Callable] = [
     t_render_size_matches_image, t_neutral_params_are_identity, t_slider_directions, t_srgb_pipeline, t_light_scene_read,
     t_custom_mask_shapes, t_gradient_and_radial_geometry, t_brush_resolution_independent, t_range_masks_select_what_they_claim,
     t_mask_limit_and_refine, t_custom_mask_edit_stays_inside, t_point_curve,
-    t_region_coverage, t_region_paint_fix, t_lut_behaviour, t_match_reference, t_banded_ops_are_exact, t_smart_looks, t_adaptive_looks, t_sky_studio, t_sky_replacement, t_sky_full_res_matte, t_drama_operations, t_drama_looks, t_white_level_and_look_scale,
+    t_region_coverage, t_region_paint_fix, t_lut_behaviour, t_match_reference, t_banded_ops_are_exact, t_smart_looks, t_adaptive_looks, t_sky_studio, t_sky_replacement, t_sky_full_res_matte, t_drama_operations, t_drama_looks, t_white_level_and_look_scale, t_long_exposure,
 ]
 
 

@@ -5,7 +5,7 @@ import Slider from './Slider';
 import Toggle from './Toggle';
 import type { Suggest } from './SkyPanel';
 import { Sub } from './panels';
-import { API_URL, DramaSettings, EditCtx, Params, newLayer } from '../lib/params';
+import { API_URL, DramaSettings, EditCtx, LONGEXP_OFF, LongExposureSettings, Params, newLayer } from '../lib/params';
 
 type LutItem = { id: string; name: string; builtin: boolean };
 type Preset = { id: string; name: string; scopes: string[]; params: Partial<Params> };
@@ -246,6 +246,39 @@ export default function LooksPanel({ ctx, suggest }: { ctx: EditCtx; suggest: Su
 
   return (
     <>
+      <Sub title="Long exposure · ND filter look">
+        <p className="text-[11px] leading-relaxed text-zinc-500">The look of a slow shutter and an ND filter from a single frame: water turns to silk (rocks and reflections stay), clouds stretch along the wind, a graduated ND holds the sky down. Each acts only inside its own region.</p>
+        {(() => {
+          const le: LongExposureSettings = p.longexp ?? LONGEXP_OFF;
+          const hasWater = ctx.analysis.mask_names?.includes('water'), hasSky = ctx.analysis.mask_names?.includes('sky');
+          const setLe = (patch: Partial<LongExposureSettings>, commit = true) => ctx.update((c) => {
+            const n = { ...(c.longexp ?? LONGEXP_OFF), ...patch };
+            return { ...c, longexp: { ...n, enabled: n.water > 0 || n.clouds > 0 || n.grad_nd > 0 } };
+          }, commit, commit);
+          return (
+            <>
+              <div className="flex flex-wrap gap-1.5">
+                <button disabled={!hasWater} onClick={() => setLe({ water: 60 })} className={`${chip(le.enabled && le.water > 0 && le.clouds === 0 && le.grad_nd === 0)} disabled:opacity-40`} title={hasWater ? 'Silky water' : 'No water found in this photo'}>Silky water</button>
+                <button disabled={!hasSky} onClick={() => setLe({ clouds: 60 })} className={`${chip(le.enabled && le.clouds > 0 && le.water === 0 && le.grad_nd === 0)} disabled:opacity-40`} title={hasSky ? 'Streaked clouds' : 'No sky found in this photo'}>Streaked clouds</button>
+                <button onClick={() => setLe({ water: hasWater ? 65 : 0, clouds: hasSky ? 55 : 0, grad_nd: hasSky ? 55 : 0 })} className={chip(le.enabled && le.water > 0 && (le.clouds > 0 || le.grad_nd > 0))}>Full ND look</button>
+                {le.enabled && <button onClick={() => setLe({ water: 0, clouds: 0, grad_nd: 0 })} className={chip(false)}>Off</button>}
+              </div>
+              <Slider label="Silky water" value={le.water} min={0} max={100} def={0} fmt={(v) => `${Math.round(v)}`} disabled={!hasWater} hint="Ripples averaged away; rocks, shore and reflections stay"
+                onChange={(v) => setLe({ water: v }, false)} />
+              {le.water > 0 && (
+                <div className="flex items-center gap-1.5 text-[11px] text-zinc-400"><span>Flow</span>
+                  {(['auto', 'horizontal', 'vertical'] as const).map((d) => <button key={d} onClick={() => setLe({ water_dir: d })} className={chip(le.water_dir === d)}>{d === 'auto' ? 'Auto' : d === 'horizontal' ? 'Glassy / horizontal' : 'Vertical'}</button>)}
+                </div>
+              )}
+              <Slider label="Cloud streaks" value={le.clouds} min={0} max={100} def={0} fmt={(v) => `${Math.round(v)}`} disabled={!hasSky} hint="Clouds stretched along the wind"
+                onChange={(v) => setLe({ clouds: v }, false)} />
+              {le.clouds > 0 && <Slider label="Wind direction" value={le.cloud_angle} min={-90} max={90} def={0} fmt={(v) => `${Math.round(v)}°`} onChange={(v) => setLe({ cloud_angle: v }, false)} />}
+              <Slider label="Graduated ND (sky)" value={le.grad_nd} min={0} max={100} def={0} fmt={(v) => `${Math.round(v)}`} disabled={!hasSky} hint="Holds the sky down toward the top, the land untouched"
+                onChange={(v) => setLe({ grad_nd: v }, false)} />
+            </>
+          );
+        })()}
+      </Sub>
       <Sub title="Drama looks for this photo">
         <p className="text-[11px] leading-relaxed text-zinc-500">The scene is analysed, then looks are generated for it: colour poured over every tone, a sky that keeps its clouds, bloom and mist. The starred ones fit best, but it is your call.</p>
         {!dramaList && <p className="text-[11px] text-zinc-500">Analysing the scene…</p>}

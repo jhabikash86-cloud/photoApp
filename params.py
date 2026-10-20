@@ -141,6 +141,16 @@ class Drama(BaseModel):
     name: str = ""                                     # which generated look this is
 
 
+class LongExposure(BaseModel):
+    """Digital long exposure / ND-filter look, region by region (see longexp.py)."""
+    enabled: bool = False
+    water: float = Field(0, ge=0, le=100)               # silky water: ripples averaged away, reflections and rocks kept
+    water_dir: str = "auto"                              # auto (follow the flow of a stream, else glass) | horizontal | vertical
+    clouds: float = Field(0, ge=0, le=100)              # clouds stretched into streaks along the wind
+    cloud_angle: float = Field(0, ge=-90, le=90)        # wind direction in degrees (0 = horizontal, + = tilted clockwise)
+    grad_nd: float = Field(0, ge=0, le=100)             # graduated ND filter: the sky held down toward the top, the land untouched
+
+
 class SkyReplace(BaseModel):
     """Replace the sky with one from the sky library, matched to the photo. Everything adaptive is decided when the sky is chosen
     (see sky_replace.plan) and stored here, so the render itself is cheap and every number stays editable."""
@@ -255,6 +265,7 @@ class EditParams(BaseModel):
     lut: LutSetting = LutSetting()
     sky_replace: SkyReplace = SkyReplace()
     drama: Drama = Drama()
+    longexp: LongExposure = LongExposure()
     grading: Grading = Grading()
     grading_enabled: bool = True                  # HSL mixer + colour balance + curve
 

@@ -23,6 +23,7 @@ import colorcal
 import custom_masks
 import denoise
 import drama
+import longexp
 import luts
 import sky_replace
 import depth as depthmod
@@ -747,6 +748,10 @@ def _render(an: Analysis, p: EditParams, edge: Optional[int], draft: bool) -> ad
             m["sky"] = sky_override                               # later stages follow the cleaned sky edge
     faces = _faces_at(an, scale)
     ck = (edge, size) + ((_js(sr),) if sky_override is not None else ())     # every cached stage depends on which sky is in the picture
+    if longexp.active(p.longexp):                                  # slow-shutter / ND look: water, clouds and a graduated sky, before any tone or detail step
+        _src_le = src
+        src = _memo(an, ("longexp", _js(p.longexp)) + ck, lambda: longexp.apply(_src_le, m, p.longexp))
+        ck = ck + (_js(p.longexp),)
     matte = None
     if "person" in m:   # a proper matte at THIS resolution: clean edges, hair-aware, no speckle
         matte = _memo(an, ("matte", size) + ck[2:], lambda: matting.refine_alpha(src, m["person"], m.get("hair")))

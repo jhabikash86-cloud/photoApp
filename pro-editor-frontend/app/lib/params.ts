@@ -79,7 +79,10 @@ export type Params = {
   lut?: { id: string | null; intensity: number };
   sky_replace?: SkyReplace;
   drama?: DramaSettings;
+  longexp?: LongExposureSettings;
 };
+export type LongExposureSettings = { enabled: boolean; water: number; water_dir: string; clouds: number; cloud_angle: number; grad_nd: number };
+export const LONGEXP_OFF: LongExposureSettings = { enabled: false, water: 0, water_dir: 'auto', clouds: 0, cloud_angle: 0, grad_nd: 0 };
 export type DramaSettings = {
   enabled: boolean; amount: number; mood: number; sh_hue: number; sh_chroma: number; mid_hue: number; mid_chroma: number; hi_hue: number; hi_chroma: number;
   protect: number; enrich: number; skin_safe: boolean; sky_burn: number; sky_model: number; sky_texture: number; sky_colour: number; sky_hue: number; sky_chroma: number;
