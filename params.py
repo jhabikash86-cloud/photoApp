@@ -151,6 +151,16 @@ class LongExposure(BaseModel):
     grad_nd: float = Field(0, ge=0, le=100)             # graduated ND filter: the sky held down toward the top, the land untouched
 
 
+class Geometry(BaseModel):
+    """Crop, straighten and aspect ratio (see geometry.py). The window is the largest of the chosen aspect that fits inside the rotated picture."""
+    enabled: bool = False
+    angle: float = Field(0, ge=-45, le=45)             # degrees, positive = rotate clockwise
+    aspect: str = "original"                            # original | free | 1:1 | 4:5 | 5:4 | 3:2 | 2:3 | 16:9 | 9:16 | 3:1
+    zoom: float = Field(1.0, ge=1.0, le=4.0)            # 1 = the largest window that fits
+    x: float = Field(0, ge=-1, le=1)                    # move the window inside the room that is left
+    y: float = Field(0, ge=-1, le=1)
+
+
 class SkyReplace(BaseModel):
     """Replace the sky with one from the sky library, matched to the photo. Everything adaptive is decided when the sky is chosen
     (see sky_replace.plan) and stored here, so the render itself is cheap and every number stays editable."""
@@ -266,6 +276,7 @@ class EditParams(BaseModel):
     sky_replace: SkyReplace = SkyReplace()
     drama: Drama = Drama()
     longexp: LongExposure = LongExposure()
+    geometry: Geometry = Geometry()
     grading: Grading = Grading()
     grading_enabled: bool = True                  # HSL mixer + colour balance + curve
 

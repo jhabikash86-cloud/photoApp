@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import re
 import threading
 import uuid
 from collections import OrderedDict
@@ -21,6 +22,8 @@ from pydantic import BaseModel
 import adjust
 import engine
 import drama_looks
+import exporter
+import geometry
 import library
 import look_engine
 import luts
@@ -297,6 +300,127 @@ def export(req: ExportRequest):
         original.info.setdefault("icc_profile", None)
         adjust.save(img, original, str(OUTPUT_DIR / name))
     return {"url": f"/outputs/{name}", "size": list(img.size)}
+
+
+class ExportTo(BaseModel):
+    session_id: str
+    params: EditParams
+    preset: str = "full"
+    name: str = "photo"
+    version: int = 0
+    max_edge: Optional[int] = None
+    quality: Optional[int] = None
+
+
+def _safe_stem(name: str) -> str:
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(name).stem).strip("._") or "photo"
+    return stem[:80]
+
+
+@app.get("/api/export_presets")
+def export_presets():
+    return {"presets": [{"id": k, "label": v["label"], "format": v["format"], "max_edge": v["max_edge"]} for k, v in exporter.PRESETS.items()]}
+
+
+@app.post("/api/export_to")
+def export_to(req: ExportTo):
+    """One photo, one preset (web, social, print TIFF, ...)."""
+    if req.preset not in exporter.PRESETS:
+        raise HTTPException(400, "Unknown export preset.")
+    an = _session(req.session_id)
+    with LOCKS[req.session_id]:
+        path, size = exporter.export(an, req.params, req.preset, str(OUTPUT_DIR / f"{an.sid}_{req.preset}_{req.version}"), req.max_edge, req.quality)
+    return {"url": f"/outputs/{Path(path).name}", "size": list(size), "filename": f"{_safe_stem(req.name)}-{req.preset}{Path(path).suffix}"}
+
+
+class ExportItem(BaseModel):
+    session_id: str
+    params: EditParams
+    name: str
+
+
+class ExportBatch(BaseModel):
+    items: List[ExportItem]
+    preset: str = "web"
+
+
+EXPORT_JOBS: "OrderedDict[str, dict]" = OrderedDict()
+
+
+def _run_export_job(job_id: str, req: ExportBatch):
+    import zipfile
+    job = EXPORT_JOBS[job_id]
+    out = OUTPUT_DIR / f"export_{job_id}.zip"
+    used: set = set()
+    try:
+        with zipfile.ZipFile(out, "w", zipfile.ZIP_STORED) as z:
+            for n, it in enumerate(req.items, 1):
+                if job.get("cancel"):
+                    job["status"] = "cancelled"
+                    return
+                job["current"] = it.name
+                try:
+                    an = _session(it.session_id)
+                    with LOCKS[it.session_id]:
+                        path, _ = exporter.export(an, it.params, req.preset, str(OUTPUT_DIR / f"{job_id}_{n}"))
+                    stem, ext = _safe_stem(it.name), Path(path).suffix
+                    arc, k = f"{stem}-{req.preset}{ext}", 1
+                    while arc in used:
+                        k += 1
+                        arc = f"{stem}-{req.preset}-{k}{ext}"
+                    used.add(arc)
+                    z.write(path, arc)
+                    Path(path).unlink(missing_ok=True)
+                except Exception as e:                       # one bad photo must not stop the rest
+                    job["failed"] += 1
+                    job["errors"].append(f"{it.name}: {str(e)[:120]}")
+                job["done"] = n
+        job["url"] = f"/outputs/{out.name}"
+        job["status"] = "done"
+    except Exception as e:
+        job["status"] = "error"
+        job["errors"].append(str(e)[:200])
+
+
+@app.post("/api/export_batch")
+def export_batch(req: ExportBatch):
+    """Every photo with its own edit, delivered as one ZIP (runs in the background; poll /api/export_jobs/{id})."""
+    if req.preset not in exporter.PRESETS:
+        raise HTTPException(400, "Unknown export preset.")
+    if not req.items:
+        raise HTTPException(400, "Nothing to export.")
+    job_id = uuid.uuid4().hex[:12]
+    EXPORT_JOBS[job_id] = dict(id=job_id, status="running", done=0, total=len(req.items), failed=0, current="", errors=[], url=None, preset=req.preset)
+    while len(EXPORT_JOBS) > 20:
+        EXPORT_JOBS.popitem(last=False)
+    threading.Thread(target=_run_export_job, args=(job_id, req), daemon=True).start()
+    return {"job_id": job_id}
+
+
+@app.get("/api/export_jobs/{job_id}")
+def export_job(job_id: str):
+    job = EXPORT_JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(404, "Unknown export job.")
+    return {k: v for k, v in job.items() if k != "cancel"}
+
+
+@app.post("/api/export_jobs/{job_id}/cancel")
+def export_cancel(job_id: str):
+    job = EXPORT_JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(404, "Unknown export job.")
+    job["cancel"] = True
+    return {"ok": True}
+
+
+@app.get("/api/geometry/{sid}")
+def geometry_suggest(sid: str):
+    """How much to rotate to level the photo (from the horizon, else from strong straight lines)."""
+    an = _session(sid)
+    with LOCKS[sid]:
+        src, size, _ = engine._target(an, 900)
+        return geometry.auto_angle(src, dict(engine._masks_at(an, size)))
 
 
 @app.get("/api/regions/{sid}")

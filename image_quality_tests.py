@@ -836,6 +836,56 @@ def t_long_exposure(an, p) -> Result:
     return "long exposure: region-limited, silky water, streaked clouds, graduated ND, size independent", bool(not bad), f"{len(checks)} checks; failed: {bad or 'none'}; " + "; ".join(notes)
 
 
+def t_geometry(an, p) -> Result:
+    """Crop / straighten: off is identity; the window has the requested aspect and never shows an empty corner; auto-straighten finds a known tilt;
+    preview and export crop the same area."""
+    import cv2
+    import geometry
+    from params import Geometry
+    checks, notes = {}, []
+    rng = np.random.default_rng(5)
+    h, w = 800, 1200
+    img = np.zeros((h, w, 3), np.float32)
+    img[:430] = (0.5, 0.7, 0.95)
+    img[430:] = (0.25, 0.35, 0.15)
+    cv2.line(img, (300, 100), (300, 650), (0.1, 0.1, 0.1), 9)
+    img = np.clip(img + rng.normal(0, 0.02, img.shape).astype(np.float32), 0, 1)
+    sky = np.zeros((h, w), np.float32)
+    sky[:430] = 1
+    checks["off is identity"] = geometry.apply(img, Geometry()) is img
+    for asp, ratio in (("1:1", 1.0), ("4:5", 0.8), ("16:9", 16 / 9), ("3:2", 1.5)):
+        g = Geometry(enabled=True, angle=3.5, aspect=asp)
+        o = geometry.apply(img, g)
+        checks[f"aspect {asp} exact"] = abs(o.shape[1] / o.shape[0] - ratio) < 0.01
+    # no empty corner: warp a constant-coloured picture whose outside would read as the border colour
+    for ang in (-7.0, 4.0, 12.0):
+        g = Geometry(enabled=True, angle=ang, aspect="3:2", zoom=1.0, x=1.0, y=-1.0)
+        ow, oh, M = geometry.window(w, h, g)
+        ones = np.ones((h, w), np.float32)
+        warped = cv2.warpAffine(ones, M, (ow, oh), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+        checks[f"no empty corner at {ang:+.0f} deg, window moved to the edge"] = float((warped < 0.99).mean()) == 0.0
+    for tilt in (-4.0, 2.5, 6.0):
+        M = cv2.getRotationMatrix2D((w / 2, h / 2), -tilt, 1.0)
+        tilted = cv2.warpAffine(img, M, (w, h), borderMode=cv2.BORDER_REFLECT)
+        sk = cv2.warpAffine(sky, M, (w, h), borderMode=cv2.BORDER_REPLICATE)
+        r = geometry.auto_angle(tilted, {"sky": sk})
+        checks[f"auto-straighten finds a {tilt:+.1f} deg tilt"] = abs(r["angle"] + tilt) < 0.4 and r["confidence"] > 0.5
+    g = Geometry(enabled=True, angle=-3.0, aspect="4:5", zoom=1.4, x=0.5, y=0.0)
+    small = geometry.apply(cv2.resize(img, (300, 200), interpolation=cv2.INTER_AREA), g)
+    big = geometry.apply(img, g)
+    d = float(np.abs(small - cv2.resize(big, (small.shape[1], small.shape[0]), interpolation=cv2.INTER_AREA)).mean())
+    checks["preview and export crop the same area"] = d < 0.03
+    notes.append(f"preview vs export differ {d:.3f}")
+    # through the whole engine: the rendered size is the window's size
+    import engine
+    p2 = p.model_copy(deep=True)
+    p2.geometry = Geometry(enabled=True, angle=2.0, aspect="1:1")
+    im = engine.render(an, p2, 600)
+    checks["engine renders the cropped window"] = abs(im.size[0] / im.size[1] - 1.0) < 0.01
+    bad = [k for k, v in checks.items() if not v]
+    return "crop & straighten: exact aspect, no empty corners, auto-straighten accurate, preview = export", bool(not bad), f"{len(checks)} checks; failed: {bad or 'none'}; " + "; ".join(notes)
+
+
 TESTS: List[Callable] = [
     t_mask_alignment_and_range, t_mask_operations, t_mask_controls, t_local_edit_stays_inside_mask,
     t_db_off_is_identity, t_db_highlights_and_shadows_protected, t_db_preserves_skin_texture, t_db_no_halo,
@@ -843,7 +893,7 @@ TESTS: List[Callable] = [
     t_render_size_matches_image, t_neutral_params_are_identity, t_slider_directions, t_srgb_pipeline, t_light_scene_read,
     t_custom_mask_shapes, t_gradient_and_radial_geometry, t_brush_resolution_independent, t_range_masks_select_what_they_claim,
     t_mask_limit_and_refine, t_custom_mask_edit_stays_inside, t_point_curve,
-    t_region_coverage, t_region_paint_fix, t_lut_behaviour, t_match_reference, t_banded_ops_are_exact, t_smart_looks, t_adaptive_looks, t_sky_studio, t_sky_replacement, t_sky_full_res_matte, t_drama_operations, t_drama_looks, t_white_level_and_look_scale, t_long_exposure,
+    t_region_coverage, t_region_paint_fix, t_lut_behaviour, t_match_reference, t_banded_ops_are_exact, t_smart_looks, t_adaptive_looks, t_sky_studio, t_sky_replacement, t_sky_full_res_matte, t_drama_operations, t_drama_looks, t_white_level_and_look_scale, t_long_exposure, t_geometry,
 ]
 
 

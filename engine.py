@@ -23,6 +23,7 @@ import colorcal
 import custom_masks
 import denoise
 import drama
+import geometry
 import longexp
 import luts
 import sky_replace
@@ -729,7 +730,12 @@ def render(an: Analysis, p: EditParams, edge: Optional[int] = PREVIEW_EDGE, draf
     return _render(an, p, edge, draft)
 
 
-def _render(an: Analysis, p: EditParams, edge: Optional[int], draft: bool) -> adjust.Image.Image:
+def render_float(an: Analysis, p: EditParams, edge: Optional[int] = None) -> np.ndarray:
+    """The finished picture as float32 RGB 0..1 (no 8-bit rounding, no output sharpening): for 16-bit export and resizing before sharpening."""
+    return _render(an, p, edge, False, float_out=True)
+
+
+def _render(an: Analysis, p: EditParams, edge: Optional[int], draft: bool, float_out: bool = False):
     if p.look not in LOOKS:
         raise ValueError(f"Unknown look '{p.look}'. Choose from: {', '.join(LOOKS)}")
     src, size, scale = _target(an, edge)
@@ -889,6 +895,10 @@ def _render(an: Analysis, p: EditParams, edge: Optional[int], draft: bool) -> ad
         out = grade.grain(out, e.grain)
 
     result = np.clip(src0 + (np.clip(out, 0, 1) - src0) * p.intensity, 0, 1)
+    if geometry.active(p.geometry):                                # the very last step: crop / straighten the finished picture
+        result = geometry.apply(result, p.geometry)
+    if float_out:
+        return result
     img = adjust.to_image(result)
     if full_res:                                                   # hand the big float pictures back before the last (8-bit) step: a 48 MP float picture is 580 MB
         result = out = src0 = src = arr_wb = arr_g = cb = None
