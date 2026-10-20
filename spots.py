@@ -31,16 +31,21 @@ def detect(rgb: np.ndarray, sky: np.ndarray, amount: float = 60.0) -> List[dict]
     k = int(max(31, 0.035 * big)) | 1
     bg = cv2.medianBlur((np.clip(y, 0, 1) * 255).astype(np.uint8), k).astype(np.float32) / 255.0
     diff = bg - y
-    thr = 0.012 + (1.0 - np.clip(amount / 100.0, 0, 1)) * 0.030
+    hp = (y - cv2.GaussianBlur(y, (0, 0), 2.0))[inner]
+    sigma = float(1.4826 * np.median(np.abs(hp - np.median(hp))))                  # the grain of this sky
+    thr = max(0.012 + (1.0 - np.clip(amount / 100.0, 0, 1)) * 0.030, 5.0 * sigma)    # a spot must stand well clear of the grain
     cand = ((diff > thr) & inner).astype(np.uint8)
     cand = cv2.morphologyEx(cand, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
     n, lab, st, cen = cv2.connectedComponentsWithStats(cand)
-    local_sd = cv2.GaussianBlur((y - cv2.GaussianBlur(y, (0, 0), 6)) ** 2, (0, 0), 12) ** 0.5       # how textured the sky is around here
+    near = cv2.dilate(cand, np.ones((9, 9), np.uint8)) == 0                               # the sky's own texture, with the candidate spots left out of the measure
+    res = np.where(near, y - bg, 0.0).astype(np.float32)
+    wgt = near.astype(np.float32)
+    local_sd = np.sqrt(cv2.GaussianBlur(res * res, (0, 0), 18) / np.maximum(cv2.GaussianBlur(wgt, (0, 0), 18), 1e-3))
     out = []
     amax = math.pi * (0.025 * big) ** 2
     for i in range(1, n):
         a = st[i, cv2.CC_STAT_AREA]
-        if a < 5 or a > amax:
+        if a < 20 or a > amax:
             continue
         bw, bh = st[i, cv2.CC_STAT_WIDTH], st[i, cv2.CC_STAT_HEIGHT]
         if max(bw, bh) > 1.8 * max(1, min(bw, bh)):
@@ -52,8 +57,8 @@ def detect(rgb: np.ndarray, sky: np.ndarray, amount: float = 60.0) -> List[dict]
         if contrast > 0.16:
             continue                                                   # too dark to be dust: a bird, a plane, a real object
         cx, cy = cen[i]
-        if local_sd[int(cy), int(cx)] > 0.02:
-            continue                                                   # cloud texture around it
+        if local_sd[int(cy), int(cx)] > 0.0075:
+            continue                                                   # wispy cloud around it: not a clear patch of sky, so no judgement is safe
         r = math.sqrt(a / math.pi)
         # soft edge: dust is out of focus, so its edge is a gentle slope; a sharp little speck has a steep one
         gy, gx = np.gradient(y)
