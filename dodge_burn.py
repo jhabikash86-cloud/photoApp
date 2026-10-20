@@ -25,6 +25,8 @@ from typing import Dict, List, Optional, Tuple
 import cv2
 import numpy as np
 
+from bands import banded
+
 from adjust import edge_aware_blur
 from landscape import _guided
 from params import DodgeBurn
@@ -194,11 +196,9 @@ def compute_ev(arr: np.ndarray, masks: Dict[str, np.ndarray], p: DodgeBurn) -> O
     return ev
 
 
-def apply(arr: np.ndarray, masks: Dict[str, np.ndarray], p: DodgeBurn) -> np.ndarray:
-    """Apply dodge & burn. Returns `arr` itself when there is nothing to do (no copy), else a new array."""
-    ev = compute_ev(arr, masks, p)
-    if ev is None:
-        return arr
+@banded
+def _apply_px(arr: np.ndarray, ev: np.ndarray) -> np.ndarray:
+    """The per-pixel part of dodge & burn, in row bands (a 48 MP picture would otherwise need a dozen full-size temporaries)."""
     y = arr @ LUMA
     mx = arr.max(axis=2)                                                   # the brightest channel is what clips first
     pos = np.maximum(ev, 0) * (1 - _smoothstep(0.62, 0.96, mx))             # highlight headroom: no clipped dodging
@@ -207,6 +207,14 @@ def apply(arr: np.ndarray, masks: Dict[str, np.ndarray], p: DodgeBurn) -> np.nda
     lin = np.power(np.clip(arr, 0, 1), GAMMA) * gain
     lin = np.where(lin > 0.85, 0.85 + 0.15 * np.tanh((lin - 0.85) / 0.15), lin)   # soft shoulder
     return np.power(np.clip(lin, 0, 1), 1 / GAMMA).astype(np.float32)
+
+
+def apply(arr: np.ndarray, masks: Dict[str, np.ndarray], p: DodgeBurn) -> np.ndarray:
+    """Apply dodge & burn. Returns `arr` itself when there is nothing to do (no copy), else a new array."""
+    ev = compute_ev(arr, masks, p)
+    if ev is None:
+        return arr
+    return _apply_px(arr, ev)
 
 
 # ---------------------------------------------------------------------------------------------------

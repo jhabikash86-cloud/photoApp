@@ -102,6 +102,16 @@ def _level_horizon(sky: np.ndarray) -> bool:
     return float(np.percentile(low, 85) - np.percentile(low, 15)) < 0.15
 
 
+@banded
+def _scale_px(arr: np.ndarray, g: np.ndarray) -> np.ndarray:
+    return np.clip(arr * g[..., None], 0, 1)
+
+
+@banded
+def _add_px(arr: np.ndarray, a: np.ndarray) -> np.ndarray:
+    return np.clip(arr + a[..., None], 0, 1)
+
+
 def _sky(arr: np.ndarray, sky: np.ndarray, d: Drama, k: float, targets: np.ndarray) -> np.ndarray:
     """Graduated burn toward the top that keeps the clouds' own contrast, contrast inside real clouds only, and richer sky colour."""
     h, w = sky.shape
@@ -112,7 +122,6 @@ def _sky(arr: np.ndarray, sky: np.ndarray, d: Drama, k: float, targets: np.ndarr
     r = max(3, int(round(0.012 * max(h, w))))
     grown = cv2.dilate((sky > 0.5).astype(np.uint8), cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * r + 1, 2 * r + 1))).astype(np.float32)
     sky = np.maximum(sky, cv2.GaussianBlur(grown, (0, 0), r / 2.0))      # the mask's soft edge must not leave an unburned bright rim along the skyline
-    m = sky[..., None]
     out = arr
     burn = d.sky_burn / 100.0 * k
     if burn > 0:
@@ -121,7 +130,7 @@ def _sky(arr: np.ndarray, sky: np.ndarray, d: Drama, k: float, targets: np.ndarr
         yl = _smooth_luma(out)
         room = np.clip((yl - 0.30) / 0.40, 0, 1)                        # a sky that is already dark or deep is not burned further
         f = 1.0 - 0.34 * burn * ramp * room                             # gentle: a pro lowers a bright sky by ~20%, it must stay luminous
-        out = out * (1 + (f[..., None] - 1) * m)
+        out = _scale_px(out, 1.0 + (f - 1.0) * sky)
     mdl = d.sky_model / 100.0 * k
     if mdl > 0:
         y = (out @ LUMA).astype(np.float32)
@@ -131,9 +140,8 @@ def _sky(arr: np.ndarray, sky: np.ndarray, d: Drama, k: float, targets: np.ndarr
             if top > 0.5:
                 g = 1.0 + 0.9 * mdl                                       # a gamma around the sky's own white: bright clouds stay white, the veil between them deepens
                 yr = np.clip(y / top, 0, 1.2)
-                f = np.where(y > 1e-4, (top * yr ** g) / np.maximum(y, 1e-4), 1.0)
-                f = np.clip(f, 0.2, 1.0)[..., None]
-                out = out * (1 + (f - 1) * m)
+                f = np.clip(np.where(y > 1e-4, (top * yr ** g) / np.maximum(y, 1e-4), 1.0), 0.2, 1.0)
+                out = _scale_px(out, 1.0 + (f - 1.0) * sky)
     tex = min(d.sky_texture / 100.0 * k, 0.75)
     if tex > 0:
         # computed at a FIXED working size, so the result looks the same at any preview or export size (the cloud shapes are what is boosted)
@@ -159,7 +167,7 @@ def _sky(arr: np.ndarray, sky: np.ndarray, d: Drama, k: float, targets: np.ndarr
         cloudy = np.clip((cloudy - 0.006) / 0.02, 0, 1)                         # 0 for a clear sky, 1 for a cloudy one
         boost = (0.17 * np.tanh(soft(det, 0.012) / 0.07) + 0.06 * np.tanh(soft(fine, 0.006) / 0.035)) * core
         boost = cv2.resize((tex * boost * cloudy).astype(np.float32), (w, h), interpolation=cv2.INTER_LINEAR)
-        out = np.clip(out + boost[..., None] * m, 0, 1)
+        out = _add_px(out, boost * sky)
     col = d.sky_colour / 100.0 * k
     if col > 0:
         ys = _smooth_luma(out)
@@ -323,7 +331,7 @@ def _anchor_white(arr: np.ndarray, target: float) -> np.ndarray:
     yy = arr @ LUMA
     w = np.clip((yy - 0.30) / 0.45, 0, 1)
     w = w * w * (3 - 2 * w)                                          # smoothstep: shadows and mids untouched
-    return np.clip(arr * (1.0 + (g - 1.0) * w)[..., None], 0, 1)
+    return _scale_px(arr, 1.0 + (g - 1.0) * w)
 
 
 # ------------------------------------------------------------------------------------------------ the stage

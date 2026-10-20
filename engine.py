@@ -7,6 +7,7 @@ render(an, params)    cheap, runs on every slider move from the cached analysis.
                       -> people -> bokeh -> glow / vignette / grain -> overall intensity -> sharpen.
 Every stage is memoised on its own inputs, so moving one slider recomputes only what depends on it.
 """
+import collections.abc
 import json
 import time
 import uuid
@@ -575,10 +576,50 @@ def _nomemo(an, key, fn):
     return fn()
 
 
+class _LazyMasks(collections.abc.MutableMapping):
+    """The masks of a full-resolution export, each built only when a stage asks for it (a 48 MP mask is 190 MB: building every one up front
+    cost gigabytes for masks that the edit never touches)."""
+
+    def __init__(self, an: Analysis, size):
+        self._an, self._size, self._d, self._tried = an, size, {}, set()
+
+    def _load(self, k):
+        if k in self._d or k in self._tried:
+            return
+        self._tried.add(k)
+        if k in self._an.bank.names() or k == "hair":
+            m = self._an.bank.get(k, self._size, cache=False)
+            if m is not None:
+                self._d[k] = m
+
+    def __getitem__(self, k):
+        self._load(k)
+        return self._d[k]
+
+    def __setitem__(self, k, v):
+        self._d[k] = v
+        self._tried.add(k)
+
+    def __delitem__(self, k):
+        del self._d[k]
+
+    def __contains__(self, k):
+        self._load(k)
+        return k in self._d
+
+    def __iter__(self):
+        for k in self._an.bank.names() + ["hair"]:
+            self._load(k)
+        return iter(list(self._d))
+
+    def __len__(self):
+        return len(list(iter(self)))
+
+
 def _masks_at(an: Analysis, size, keep: bool = True) -> Dict[str, np.ndarray]:
     """Every mask (including derived foreground/background) at `size`, from the shared mask bank."""
     if not keep:
-        return {n: m for n in an.bank.names() + ["hair"] if (m := an.bank.get(n, size, cache=False)) is not None}
+        return _LazyMasks(an, size)
     return _memo(an, ("masks", size), lambda: {n: an.bank.get(n, size) for n in an.bank.names() + ["hair"]
                                                 if an.bank.get(n, size) is not None})
 
@@ -695,7 +736,7 @@ def _render(an: Analysis, p: EditParams, edge: Optional[int], draft: bool) -> ad
     _memo = _nomemo if full_res else globals()['_memo']      # a one-off full-size export must not park gigabytes in the session cache
     if an.scene.kind == "screenshot":
         return adjust.to_image(src)
-    m = dict(_masks_at(an, size, keep=not full_res))
+    m = _masks_at(an, size, keep=False) if full_res else dict(_masks_at(an, size, keep=True))
     src0 = src                                                     # the untouched original: 'Edit strength' blends back to this
     sr = p.sky_replace
     sky_override = None
