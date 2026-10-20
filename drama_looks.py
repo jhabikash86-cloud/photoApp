@@ -284,6 +284,7 @@ def score(v: Variant, s: Scene) -> Tuple[float, str]:
     if v.id == "golden_glow" and s.bright_source > 0.4 and s.low_key > 0.3: add(0.22, "a bright sun in a dark scene")
     if s.people:
         sc -= 0.04
+        if v.id in ('blue_hour', 'moody_silver'): sc -= 0.15           # cold grades make people look unwell and a sunny day drab
     return float(np.clip(sc, 0.05, 1.0)), why or "a good starting point"
 
 

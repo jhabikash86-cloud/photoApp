@@ -282,6 +282,10 @@ def _mist(arr: np.ndarray, sky: Optional[np.ndarray], depth: Optional[np.ndarray
     if amt <= 0 and d.depth_haze <= 0:
         return arr
     h, w = arr.shape[:2]
+    med = float(np.median(arr[::6, ::6] @ LUMA))
+    lit = float(np.clip((med - 0.10) / 0.22, 0, 1))                         # a night scene has no luminous haze: a pale band across darkness looks like a smear
+    amt *= lit
+    d = d.model_copy(update={'depth_haze': d.depth_haze * lit})
     col = np.clip(_hue_rgb(d.hi_hue) * 0.30 + 0.78, 0, 1)                   # a pale, slightly coloured haze
     out = arr
     hz = d.mist_y if d.mist_y >= 0 else _horizon(sky)
