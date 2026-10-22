@@ -283,9 +283,13 @@ def auto_lighting(arr: np.ndarray, masks: Dict[str, np.ndarray]) -> Tuple[DodgeB
             elif closeup and by >= 0.22:
                 res.separation = min(22.0, sep_cap)
                 notes.append("Close portrait → slight background separation")
+            if res.separation > 0 and by > 0.62:
+                # a bright background is usually a bright SKY: clouds are part of the picture, and darkening them makes them dirty. Separate far less.
+                res.separation *= 1.0 - 0.85 * float(np.clip((by - 0.62) / 0.25, 0, 1))
+                notes.append("Bright background (sky / clouds) → separation kept light so the clouds stay clean")
             hot = float(((y > 0.88) & (bg > 0.6)).sum() / max((bg > 0.6).sum(), 1))
             if hot > 0.03:
-                res.burn = float(np.clip(hot * 350, 0, 35))
+                res.burn = float(np.clip(hot * 350, 0, 35 if by <= 0.62 else 12))              # bright clouds are not 'hot spots' to be flattened
                 res.burn_tones = 85.0
                 notes.append("Bright hot spots in the background → gentle burn of those highlights")
         if not notes:

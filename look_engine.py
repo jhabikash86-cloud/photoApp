@@ -426,7 +426,7 @@ def build(an, base: EditParams, look: Look, strength: float, light: Optional[str
     # ---- 5. governor: test-render small and back off anything that went too far
     p = engine._govern(an, p)
     engine._limit_tone(p)
-    notes += _govern_exposure(an, p)
+    notes += _govern_exposure(an, p, base)
     for fld in ("temperature",):
         _clip(p.basic, fld, -100, 100)
     p.look = base.look
@@ -466,12 +466,13 @@ def _keep_current(p: EditParams, cur: EditParams, touched: List[str], kk: float)
     p.effects.vignette = p.effects.vignette + keep * cur.effects.vignette
 
 
-def _govern_exposure(an, p: EditParams) -> List[str]:
+def _govern_exposure(an, p: EditParams, base: Optional[EditParams] = None) -> List[str]:
     """Keep the overall brightness in a believable range and stop highlights clipping / shadows crushing."""
     notes: List[str] = []
     src, _, _ = engine._target(an, 480)
-    base_clip = float((src.max(axis=2) >= 0.995).mean())
-    base_crush = float((src.max(axis=2) <= 0.02).mean())
+    ref = np.asarray(engine.render(an, base, 480), np.float32) / 255 if base is not None else src     # judge the look against the edit it starts from
+    base_clip = float((ref.max(axis=2) >= 0.995).mean())
+    base_crush = float((ref.max(axis=2) <= 0.02).mean())
     for _ in range(3):
         out = np.asarray(engine.render(an, p, 480), np.float32) / 255
         med = float(np.median(out @ LUMA))

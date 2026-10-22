@@ -128,6 +128,22 @@ def _dhash(y: np.ndarray) -> str:
     return f"{int(''.join('1' if b else '0' for b in bits), 2):016x}"
 
 
+def _bg_detail_ratio(y: np.ndarray, person: np.ndarray) -> Optional[float]:
+    """Detail in the background relative to the detail on the person: ~1+ for a sharp scene, near 0 when the background is ALREADY blurred
+    (a phone's portrait mode, a fast lens): blurring that again would only smear it."""
+    y = y.astype(np.float32)
+    pm = cv2.resize(np.asarray(person, np.float32), (y.shape[1], y.shape[0]), interpolation=cv2.INTER_AREA)
+
+    def energy(m):
+        lap = cv2.Laplacian(y, cv2.CV_32F, ksize=3)
+        t = cv2.resize(lap * lap, (max(4, y.shape[1] // 20), max(4, y.shape[0] // 20)), interpolation=cv2.INTER_AREA)
+        mm = cv2.resize(m.astype(np.float32), (t.shape[1], t.shape[0]), interpolation=cv2.INTER_AREA) > 0.9
+        return float(np.sqrt(np.percentile(t[mm], 85))) if mm.sum() > 8 else None
+    fg = energy(pm > 0.7)
+    bg = energy(cv2.erode((pm < 0.05).astype(np.uint8), np.ones((9, 9), np.uint8)) > 0)
+    return None if not fg or bg is None else bg / fg
+
+
 def _sharp_ratio(y: np.ndarray) -> float:
     """How much of the finest detail is real: the picture's best-focused tiles keep their high-frequency energy ONLY when it is sharp; a blurred
     picture has little to lose when blurred a little more. >=3 sharp, 2-3 soft, <2 blurry (calibrated on sharp and deliberately blurred photos)."""
@@ -282,6 +298,10 @@ def analyze(path: str, sid: Optional[str] = None) -> Analysis:
     if pm is not None and (pm > 0.6).any():
         stats["person_luma"] = float(np.median((work @ LUMA)[pm > 0.6]))
         stats["person_frac"] = float((pm > 0.5).mean())
+        try:
+            stats["bg_detail_ratio"] = _bg_detail_ratio(work @ LUMA, pm)
+        except Exception:
+            pass
 
     dmap = None
     if scene.kind != "screenshot":      # real depth: bokeh for portraits, and the foreground of every scene
@@ -364,7 +384,7 @@ def _govern(an: Analysis, p: EditParams) -> EditParams:
         ys1 = out @ LUMA
         dsat, dclip = sat1 - sat0, clip1 - clip0
         dluma, dblack = float(ys1.mean()) - luma0, float(np.percentile(ys1, 5)) - black0
-        cap = SAT_CAP.get(p.look, 0.12)
+        cap = SAT_CAP.get(p.look, 0.12) * float(np.clip((0.62 - sat0) / 0.30, 0.25, 1.0))   # an already vivid picture (a phone's punchy colour) has little headroom: no neon
         skin_up = skin_chroma(out) / max(c_skin0, 1.0) - 1 if skin_sel is not None and c_skin0 > 3 else 0.0
         too_bright = dluma > 0.06            # Auto must not wash a picture out ...
         hazy = dblack > 0.025                # ... or lift its blacks into a grey veil
@@ -499,6 +519,12 @@ def auto_params(an: Analysis, look: str = "dreamy", light: Optional[str] = None,
         b.contrast += 6; b.highlights -= 8; b.shadows += 8
         b.vibrance, b.clarity, b.texture = 18, 3, 0
         b.dehaze = 2 + 14 * haze * (1 if kind == "people" else 0.3)
+    if kind in ("portrait", "people") and "sky" in an.masks:
+        skm = np.asarray(an.masks["sky"], np.float32) > 0.6
+        if skm.sum() > 200:
+            sky_med = float(np.median((an.work @ LUMA)[skm]))
+            if sky_med > 0.72:                    # bright clouds behind a person: recover them, but keep them clean and luminous
+                b.highlights = max(b.highlights, -26.0)
     # Low-key portrait (dark backdrop on purpose, subject well lit): the frame's median is low because of the mood,
     # not because the picture is under-exposed. Expose for the skin and keep the shadows deep, as a retoucher would.
     sk = an.stats.get("skin_luma")
@@ -569,11 +595,13 @@ def auto_params(an: Analysis, look: str = "dreamy", light: Optional[str] = None,
     if kind not in ("portrait", "people"):
         e.glow = min(e.glow, 20) if look == "dreamy" else 0
     pf = an.stats.get("person_frac", 0)
+    bgr = an.stats.get("bg_detail_ratio")
+    # Background blur is a portrait tool: only for a CLOSE portrait (the person fills the frame) whose background is really sharp and busy.
+    # An environmental portrait keeps its scenery (that is the picture), and a phone's portrait mode has already blurred the background.
+    if kind == "portrait" and "person" in an.masks and pf >= 0.40 and bgr is not None and bgr >= 0.5:
+        e.bokeh = 22
     if kind == "portrait" and "person" in an.masks and pf > 0.06:
-        e.bokeh = 30      # professional but natural: subtle, distance-based
         e.vignette = e.vignette or -12
-    elif kind == "people" and "person" in an.masks and 0.10 <= pf <= 0.7 and look in ("dreamy", "soft_portrait", "natural"):
-        e.bokeh = 18      # a hint of portrait-mode separation for environmental portraits
     for name, vals in cfg.get("balance", {}).items():
         setattr(p, f"balance_{'highs' if name == 'highs' else name}", list(vals))
     _clamp(b); _clamp(e)
