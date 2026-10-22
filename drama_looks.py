@@ -46,6 +46,7 @@ class Scene:
     flat: float = 0.0
     low_key: float = 0.0
     median: float = 0.45
+    sky_blue: float = 0.0                # share of the sky that is clearly blue
     sky_luma: float = 0.0                # mean brightness of the sky in the ORIGINAL (a bright flat veil needs modelling)
     leaf_warm: float = 0.0               # share of the TREE pixels that are warm-coloured (autumn leaves), not just warm anywhere
     sun_xy: Tuple[float, float] = (-1.0, -1.0)
@@ -124,6 +125,9 @@ def _read_scene(an) -> Scene:
     if r is not None:
         s.sky_kind, s.sky_warm = r.kind, r.warm
         s.has_horizon = True
+        if r.kind in ("overcast", "dramatic") and r.blue < 0.15 and r.warm < 0.2 and s.light in ("sunny", "general"):
+            s.light = "overcast"              # the picture-wide light reader says 'sunny' for any daylight; a grey cloud deck says otherwise
+        s.sky_blue = float(r.blue)
     # a small, very bright light source: a sun or a lamp
     hi = y > 0.97
     frac = float(hi.mean())
@@ -230,7 +234,7 @@ def score(v: Variant, s: Scene) -> Tuple[float, str]:
         if x >= 0.12 and not why:
             why = reason
     lt = s.light
-    fol = s.green * min(1.0, s.chroma / 18.0)                 # real green colour, not just 'trees' (bare winter trees are not foliage)
+    fol = s.green * min(1.0, s.chroma / 18.0) * float(np.clip((s.median - 0.18) / 0.20, 0.35, 1.0))                 # real green colour, not just 'trees' (bare winter trees are not foliage)
     sn = min(1.0, s.snow * 4.0)                              # snow scene: keep it white / blue, never yellow or green
     if sn > 0.3 and v.id in ('golden_glow', 'emerald_mist', 'lush_valley', 'fiery_sky'):
         sc -= 0.6 * sn
@@ -257,6 +261,7 @@ def score(v: Variant, s: Scene) -> Tuple[float, str]:
         if s.cool > 0.6 and lt not in ("golden_hour", "sunset"): sc -= 0.1
     elif v.id == "teal_orange":
         add(0.18, "a safe, cinematic all-rounder")
+        if lt == 'overcast' and s.sky_blue < 0.15: sc -= 0.2                # warm-tinting a grey cloud deck turns it pink
         if s.warm > 0.25 and s.cool > 0.15: add(0.2, "warm and cool already side by side")
         if s.sky > 0.15 and s.sky_kind in ("clear", "scattered"): add(0.12, "blue sky against warm land")
     elif v.id == "fiery_sky":
@@ -301,6 +306,11 @@ def score(v: Variant, s: Scene) -> Tuple[float, str]:
     if s.people:
         sc -= 0.04
         if v.id in ('blue_hour', 'moody_silver'): sc -= 0.15           # cold grades make people look unwell and a sunny day drab
+        if v.id == 'alpine_blue': sc -= 0.22                                    # a heavy blue sky grade is a landscape look: it greys and purples the people in front of it
+        if v.id in ('fiery_sky', 'emerald_mist', 'lush_valley'): sc -= 0.10      # strong sky / foliage colour fights skin tones
+        if v.id == 'golden_glow' and lt in ('overcast', 'sunny', 'general') and s.sky_blue < 0.2:
+            add(0.36, 'warm light that flatters skin under a flat, grey sky')              # warmth on skin is what lifts a portrait under a dull sky
+        if v.id == 'pastel_dawn' and lt == 'overcast': add(0.18, 'soft, lifted light that suits people under cloud')
     return float(np.clip(sc, 0.05, 1.0)), why or "a good starting point"
 
 
@@ -337,8 +347,9 @@ def _adapt(v: Variant, s: Scene) -> Dict[str, float]:
         rays=v.rays * max(float(np.clip((s.bright_source - 0.3) / 0.4, 0, 1)), 0.8 * s.sun),
     )
     if s.people:
-        out["mood"] *= 0.75
-        out["enrich"] = min(out["enrich"], 12)
+        out["mood"] *= 0.55                                   # a person's skin and clothes must stay believable: grade the scene, not the subject
+        out["enrich"] = min(out["enrich"], 8)
+        out["sky_colour"] *= 0.7
     return out
 
 
@@ -364,6 +375,13 @@ def build(an, base: EditParams, vid: str, strength: float = 1.0) -> Tuple[EditPa
     p, lnotes, facts = look_engine.build(an, base, look, strength)
     p.basic.highlights = max(p.basic.highlights, -26.0)      # a gentler, more basic starting point: Drama and the white anchor do the light, the sliders do not crush it
     p.basic.shadows = min(p.basic.shadows, 26.0)
+    # the look starts from a clean tone slate, which throws away what Auto MEASURED about this photo (a dark scene needs lifting before it is graded):
+    # carry the measured exposure and shadow corrections over, so a dark photo is not made darker and a bright one is not blown
+    p.basic.exposure += 0.85 * base.basic.exposure
+    p.basic.shadows = max(p.basic.shadows, 0.85 * base.basic.shadows)
+    if s.median < 0.34:
+        p.basic.exposure += (0.34 - s.median) * 55.0 * min(float(np.clip(strength, 0.0, 1.5)), 1.0)               # a low-key scene (not on purpose: no bright light) gets lifted toward a readable median
+        p.basic.blacks = max(p.basic.blacks, -4.0)
     p.wb_mode = "asshot"                                   # keep the capture's mood: neutralising it is what makes skies grey
     p.basic.temperature = 0.0
     p.basic.tint = 0.0
@@ -377,7 +395,9 @@ def build(an, base: EditParams, vid: str, strength: float = 1.0) -> Tuple[EditPa
     sn = min(1.0, s.bright_grey * 3.0)
     cs = (1.0 + 0.2 * s.neutral) * (1.0 - 0.45 * sn) * TUNE['chroma']                                  # a grey scene needs a little more colour to feel graded
     d.sh_chroma, d.mid_chroma, d.hi_chroma = d.sh_chroma * cs, d.mid_chroma * cs, d.hi_chroma * cs * (1.0 - 0.4 * sn)
-    d.sky_hue, d.sky_chroma = v.sky_hue, v.sky_chroma
+    d.sky_hue, d.sky_chroma = v.sky_hue, v.sky_chroma * (0.7 if s.people else 1.0)
+    if s.people:
+        d.sh_chroma, d.mid_chroma, d.hi_chroma = d.sh_chroma * 0.7, d.mid_chroma * 0.7, d.hi_chroma * 0.7
     if 195 <= d.sh_hue <= 310 and s.neutral > 0.45:                        # grey scene + cool look: the dark areas take deep, saturated blue (pro edits do)
         d.sh_chroma = min(46.0, d.sh_chroma * (1.0 + 1.6 * min(1.0, (s.neutral - 0.45) / 0.4)))
     d.sky_model = a['sky_model']

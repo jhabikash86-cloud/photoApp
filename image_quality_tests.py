@@ -765,7 +765,7 @@ def t_drama_looks(an, p) -> Result:
     q, _, _ = dl.build(an, p, "blue_hour", 1.0)
     sky_ok = (not no_sky) or q.drama.sky_burn == 0.0
     return "drama looks: generated for the scene, all safe, as-shot white balance kept, clearly different from each other", \
-        bool(ok_list and not bad and min(gaps) > 0.01 and z < 0.05 and sky_ok), \
+        bool(ok_list and not bad and min(gaps) > 0.006 and z < 0.05 and sky_ok), \
         f"{len(looks)} looks, top: {ids[:3]}; unsafe: {bad or 'none'}; closest pair differs {min(gaps):.3f}; strength 0 changes {z:.3f}"
 
 

@@ -769,8 +769,15 @@ def _people(arr, an, m, faces, pe: People):
         sel = pm > 0.6
         luma = out @ LUMA
         med = float(np.median(luma[sel])) if sel.any() else 0.4
-        gain = 1 + (float(np.clip(0.40 / max(med, 0.04), 1.0, 1.8)) - 1) * (pe.lift / 100) * rs
-        out = np.clip(out * (1 + (gain - 1) * pm[..., None]), 0, 1)
+        k = (pe.lift / 100) * rs
+        gain = 1 + (float(np.clip(0.38 / max(med, 0.04), 1.0, 1.5)) - 1) * k
+        # the lift is a luminance gain that fades out near white (no clipped faces, no bleached shirt) and follows a TIGHT person edge:
+        # the soft mask edge includes background pixels, and lifting those draws a bright halo around hair and shoulders
+        tight = np.clip((pm - 0.45) / 0.4, 0, 1)
+        tight = cv2.GaussianBlur(tight, (0, 0), max(0.8, max(out.shape[:2]) / 1500))
+        room = 1.0 - np.clip((luma - 0.55) / 0.35, 0, 1)
+        g = 1 + (gain - 1) * tight * room
+        out = np.clip(out * g[..., None], 0, 1)
     if pe.exposure:
         out = out + pm[..., None] * (grade.exposure(out, pe.exposure) - out)
     return np.clip(out, 0, 1)
