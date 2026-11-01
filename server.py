@@ -70,7 +70,7 @@ sky_replace.CACHE.mkdir(parents=True, exist_ok=True)
 app.mount("/sky_thumbs", StaticFiles(directory=sky_replace.CACHE), name="sky_thumbs")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["http://localhost:3210", "http://127.0.0.1:3210", "http://localhost:3000"],
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )

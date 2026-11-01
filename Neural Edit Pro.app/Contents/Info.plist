@@ -3,10 +3,14 @@
 <plist version="1.0"><dict>
   <key>CFBundleName</key><string>Neural Edit Pro</string>
   <key>CFBundleDisplayName</key><string>Neural Edit Pro</string>
-  <key>CFBundleIdentifier</key><string>local.neuraleditpro.launcher</string>
+  <key>CFBundleIdentifier</key><string>local.neuraleditpro.app</string>
   <key>CFBundleExecutable</key><string>NeuralEditPro</string>
   <key>CFBundleIconFile</key><string>NeuralEditPro</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleVersion</key><string>1</string>
+  <key>CFBundleShortVersionString</key><string>2.0</string>
+  <key>CFBundleVersion</key><string>2</string>
   <key>LSMinimumSystemVersion</key><string>12.0</string>
+  <key>NSHighResolutionCapable</key><true/>
+  <key>LSApplicationCategoryType</key><string>public.app-category.photography</string>
+  <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/><key>NSAllowsArbitraryLoads</key><true/></dict>
 </dict></plist>
