@@ -942,6 +942,44 @@ def t_dust_spots(an, p) -> Result:
     return "dust spots: found and removed from the sky, birds / clouds / land left alone", bool(not bad), f"found {n}; failed: {bad or 'none'}; darkness left {[round(x, 4) for x in left]}"
 
 
+def t_portrait_looks(an, p) -> Result:
+    """Portrait looks: ranked, subtle (the picture changes, but little), the skin keeps its natural colour, 0% is the Auto edit, B&W is monochrome, looks differ."""
+    import cv2
+    import portrait_looks as pl
+    looks = pl.generate(an)
+    ids = [l["id"] for l in looks]
+    ok_list = len(looks) == len(pl.LOOKS) and [l["fit"] for l in looks] == sorted([l["fit"] for l in looks], reverse=True) and sum(l["recommended"] for l in looks) == 3
+    base_img = _render_arr(an, p, 500)
+    st0, _ = pl._skin_stats(an, p)
+    bad, outs, changes = [], {}, []
+    for lid in ids:
+        q, notes, _ = pl.build(an, p, lid, 1.0)
+        r = _render_arr(an, q, 500)
+        outs[lid] = r
+        change = float(np.abs(r - base_img).mean())
+        changes.append(change)
+        clip = float((r.max(2) > 0.995).mean() - (base_img.max(2) > 0.995).mean())
+        med = float(np.median(_luma(r)))
+        ok = bool(notes) and clip < 0.05 and 0.15 < med < 0.8 and change < (0.16 if lid != "bw" else 0.30)
+        if st0 is not None and lid != "bw":
+            st1, _ = pl._skin_stats(an, q)
+            c0, c1 = float(np.hypot(st0[1], st0[2])), float(np.hypot(st1[1], st1[2]))
+            dh = abs((np.degrees(np.arctan2(st1[2], st1[1]) - np.arctan2(st0[2], st0[1])) + 180) % 360 - 180)
+            ok = ok and 0.75 * c0 - 1 <= c1 <= 1.2 * c0 + 1.5 and dh <= 8.0 and abs(st1[0] - st0[0]) <= 11.0
+        if not ok:
+            bad.append(lid)
+    gaps = [float(np.abs(outs[a] - outs[b]).mean()) for i, a in enumerate(ids) for b in ids[i + 1:]]
+    zero = _render_arr(an, pl.build(an, p, ids[0], 0.0)[0], 500)
+    z = float(np.abs(zero - base_img).mean())
+    bw = outs["bw"]
+    mono = float(np.abs(bw[..., 0] - bw[..., 1]).mean() + np.abs(bw[..., 1] - bw[..., 2]).mean()) < 0.02
+    big = [pl.build(an, p, ids[0], 1.5)[0], pl.build(an, p, ids[0], 1.0)[0]]
+    stronger = float(np.abs(_render_arr(an, big[0], 500) - base_img).mean()) >= float(np.abs(_render_arr(an, big[1], 500) - base_img).mean()) * 0.95
+    return "portrait looks: subtle, skin kept natural, 0% = Auto, B&W monochrome, distinct, strength scales", \
+        bool(ok_list and not bad and min(gaps) > 0.004 and z < 0.03 and mono and stronger), \
+        f"top {ids[:3]}; unsafe: {bad or 'none'}; mean change {np.mean(changes):.3f}; closest pair {min(gaps):.3f}; 0% changes {z:.3f}"
+
+
 TESTS: List[Callable] = [
     t_mask_alignment_and_range, t_mask_operations, t_mask_controls, t_local_edit_stays_inside_mask,
     t_db_off_is_identity, t_db_highlights_and_shadows_protected, t_db_preserves_skin_texture, t_db_no_halo,
@@ -949,7 +987,7 @@ TESTS: List[Callable] = [
     t_render_size_matches_image, t_neutral_params_are_identity, t_slider_directions, t_srgb_pipeline, t_light_scene_read,
     t_custom_mask_shapes, t_gradient_and_radial_geometry, t_brush_resolution_independent, t_range_masks_select_what_they_claim,
     t_mask_limit_and_refine, t_custom_mask_edit_stays_inside, t_point_curve,
-    t_region_coverage, t_region_paint_fix, t_lut_behaviour, t_match_reference, t_banded_ops_are_exact, t_smart_looks, t_adaptive_looks, t_sky_studio, t_sky_replacement, t_sky_full_res_matte, t_drama_operations, t_drama_looks, t_white_level_and_look_scale, t_long_exposure, t_geometry, t_cull_quality, t_dust_spots,
+    t_region_coverage, t_region_paint_fix, t_lut_behaviour, t_match_reference, t_banded_ops_are_exact, t_smart_looks, t_adaptive_looks, t_sky_studio, t_sky_replacement, t_sky_full_res_matte, t_drama_operations, t_drama_looks, t_white_level_and_look_scale, t_long_exposure, t_geometry, t_cull_quality, t_dust_spots, t_portrait_looks,
 ]
 
 

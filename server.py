@@ -25,6 +25,7 @@ import drama_looks
 import exporter
 import geometry
 import library
+import portrait_looks
 import look_engine
 import luts
 import sky_engine
@@ -990,4 +991,83 @@ def drama_apply(req: DramaRequest):
         raise HTTPException(404, "Unknown look.")
     with LOCKS[req.session_id]:
         p, notes, facts = drama_looks.build(an, req.params, req.look_id, req.strength / 100.0)
+    return {"params": p.model_dump(), "notes": notes, "facts": facts}
+
+
+# ---------------------------------------------------------------------------------------------
+# Portrait looks (subtle, skin-safe looks for photos of people)
+# ---------------------------------------------------------------------------------------------
+PORTRAIT_THUMBS: "OrderedDict[tuple, bytes]" = OrderedDict()
+PORTRAIT_BUILDING: set = set()
+
+
+def _prepare_portrait_thumbs(sid: str, an, order):
+    import io
+    try:
+        base = engine.auto_params(an, "auto")
+        for lid in order:
+            if (sid, lid) in PORTRAIT_THUMBS:
+                continue
+            try:
+                with LOCKS[sid]:
+                    p, _, _ = portrait_looks.build(an, base, lid, 1.0)
+                    img = engine.render(an, p, 300, True)
+                buf = io.BytesIO()
+                img.save(buf, "JPEG", quality=80)
+                PORTRAIT_THUMBS[(sid, lid)] = buf.getvalue()
+            except Exception as e:
+                print("portrait thumb failed", lid, repr(e)[:100])
+                PORTRAIT_THUMBS[(sid, lid)] = b""
+            while len(PORTRAIT_THUMBS) > 300:
+                PORTRAIT_THUMBS.popitem(last=False)
+    finally:
+        PORTRAIT_BUILDING.discard(sid)
+
+
+@app.get("/api/portrait/{sid}")
+def portrait_list(sid: str):
+    """The portrait looks that suit THIS photo, ranked. Previews are built in the background. `has_people` says whether to offer them first."""
+    an = _session(sid)
+    with LOCKS[sid]:
+        looks = portrait_looks.generate(an)
+        s = portrait_looks.read_scene(an)
+    if sid not in PORTRAIT_BUILDING and any((sid, l["id"]) not in PORTRAIT_THUMBS for l in looks):
+        PORTRAIT_BUILDING.add(sid)
+        threading.Thread(target=_prepare_portrait_thumbs, args=(sid, an, [l["id"] for l in looks]), daemon=True).start()
+    return {"looks": looks, "has_people": bool(an.scene.kind in ("portrait", "people") or s.people > 0),
+            "scene": {"faces": s.people, "light": s.light, "skin_brightness": round(s.skin_L, 0), "backlit": round(s.backlit, 2)}}
+
+
+@app.get("/api/portrait_thumb/{sid}/{lid}")
+def portrait_thumb(sid: str, lid: str):
+    import time
+    from fastapi.responses import Response
+    _session(sid)
+    if lid not in portrait_looks.LOOKS:
+        raise HTTPException(404, "Unknown look.")
+    data = None
+    for _ in range(240):
+        data = PORTRAIT_THUMBS.get((sid, lid))
+        if data is not None:
+            break
+        time.sleep(0.5)
+    if not data:
+        raise HTTPException(404, "Preview not available.")
+    return Response(data, media_type="image/jpeg", headers={"Cache-Control": "max-age=3600"})
+
+
+class PortraitRequest(BaseModel):
+    session_id: str
+    look_id: str
+    params: EditParams            # the edit to build on (the photo's Auto, or what it was before the first portrait look)
+    strength: float = 100
+
+
+@app.post("/api/portrait")
+def portrait_apply(req: PortraitRequest):
+    an = _session(req.session_id)
+    if req.look_id not in portrait_looks.LOOKS:
+        raise HTTPException(404, "Unknown look.")
+    with LOCKS[req.session_id]:
+        p, notes, facts = portrait_looks.build(an, req.params, req.look_id, req.strength / 100.0)
     return {"params": p.model_dump(), "notes": notes, "facts": facts}

@@ -14,6 +14,9 @@ type LookState = { id: string; k: number; notes: string[]; regions: string[] };
 type DramaItem = { id: string; label: string; blurb: string; fit: number; reason: string; recommended: boolean };
 type DramaState = { id: string; k: number; notes: string[] };
 const dramaStore = new Map<string, DramaState>();
+type PortraitItem = { id: string; label: string; blurb: string; fit: number; reason: string; recommended: boolean };
+type PortraitState = { id: string; k: number; notes: string[]; base: Params };
+const portraitStore = new Map<string, PortraitState>();
 const DRAMA_SLIDERS: { key: string; label: string; min: number; max: number; hint: string }[] = [
   { key: 'mood', label: 'Colour mood', min: 0, max: 100, hint: 'How strongly the look\'s colours replace the picture\'s own cast' },
   { key: 'enrich', label: 'Richer colours', min: -100, max: 100, hint: 'Make the colours that are there richer' },
@@ -106,6 +109,10 @@ export default function LooksPanel({ ctx, suggest }: { ctx: EditCtx; suggest: Su
   const [dramaSel, setDramaSel] = useState<DramaState | null>(dramaStore.get(sid) ?? null);
   const [busyDrama, setBusyDrama] = useState(false);
   const dramaTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [portraitList, setPortraitList] = useState<{ looks: PortraitItem[]; has_people: boolean; scene: Record<string, unknown> } | null>(null);
+  const [portraitSel, setPortraitSelState] = useState<PortraitState | null>(portraitStore.get(sid) ?? null);
+  const [busyPortrait, setBusyPortrait] = useState(false);
+  const portraitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [smartSky, setSmartSky] = useState(true);
   const lookTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lutFile = useRef<HTMLInputElement>(null);
@@ -121,7 +128,7 @@ export default function LooksPanel({ ctx, suggest }: { ctx: EditCtx; suggest: Su
     getJSON<{ previews: Record<string, string> }>('/api/lut_previews', { session_id: sid, params: pRef.current })
       .then((d) => setPreviews(d.previews)).catch(() => {}).finally(() => setLoadingPrev(false));
   }, [sid]);
-  useEffect(() => { loadLuts(); loadPresets(); Promise.resolve().then(refreshPreviews); getJSON<{ looks: LookItem[] }>('/api/looks').then((d) => setLooks(d.looks)).catch(() => {}); fetch(`${API_URL}/api/drama/${sid}`).then((r) => r.json()).then((d) => { if (d.looks) setDramaList(d); }).catch(() => {}); }, [loadLuts, loadPresets, refreshPreviews, sid]);
+  useEffect(() => { loadLuts(); loadPresets(); Promise.resolve().then(refreshPreviews); getJSON<{ looks: LookItem[] }>('/api/looks').then((d) => setLooks(d.looks)).catch(() => {}); fetch(`${API_URL}/api/drama/${sid}`).then((r) => r.json()).then((d) => { if (d.looks) setDramaList(d); }).catch(() => {}); fetch(`${API_URL}/api/portrait/${sid}`).then((r) => r.json()).then((d) => { if (d.looks) setPortraitList(d); }).catch(() => {}); }, [loadLuts, loadPresets, refreshPreviews, sid]);
 
   const setMatchState = (m: MatchState | null) => { if (m) matchStore.set(sid, m); else matchStore.delete(sid); setMatch(m); };
   const toggleScope = (id: string) => setScopes((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
@@ -152,6 +159,27 @@ export default function LooksPanel({ ctx, suggest }: { ctx: EditCtx; suggest: Su
       effects: { ...c.effects, vignette: ctx.auto.effects.vignette } }), true, true);
     setLandState(null);
   };
+
+  // ---------------------------------------------------------------- Portrait looks (subtle, skin-safe, built on the photo's own edit)
+  const setPortraitSel = (v: PortraitState | null) => { if (v) portraitStore.set(sid, v); else portraitStore.delete(sid); setPortraitSelState(v); };
+  const runPortrait = useCallback(async (id: string, k: number) => {
+    setBusyPortrait(true);
+    try {
+      const base = portraitStore.get(sid)?.base ?? clone(pRef.current);        // always build on the edit from before the first portrait look
+      const d = await getJSON<{ params: Params; notes: string[] }>('/api/portrait', { session_id: sid, look_id: id, params: base, strength: Math.round(k * 100) });
+      ctx.update(() => d.params, true, true);
+      setPortraitSel({ id, k, notes: d.notes, base });
+    } catch (e) { ctx.flash(e instanceof Error ? e.message : 'Could not apply that look'); }
+    finally { setBusyPortrait(false); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sid, ctx]);
+  const onPortraitStrength = (v: number) => {
+    if (!portraitSel) return;
+    setPortraitSel({ ...portraitSel, k: v / 100 });
+    if (portraitTimer.current) clearTimeout(portraitTimer.current);
+    portraitTimer.current = setTimeout(() => runPortrait(portraitSel.id, v / 100), 260);
+  };
+  const portraitOff = () => { if (portraitSel) ctx.update(() => portraitSel.base, true, true); setPortraitSel(null); };
 
   // ---------------------------------------------------------------- Drama looks (generated for this photo)
   const saveDrama = (v: DramaState | null) => { if (v) dramaStore.set(sid, v); else dramaStore.delete(sid); setDramaSel(v); };
@@ -246,7 +274,33 @@ export default function LooksPanel({ ctx, suggest }: { ctx: EditCtx; suggest: Su
 
   return (
     <>
-      <Sub title="Long exposure · ND filter look">
+      {portraitList?.has_people && (
+        <Sub title="Portrait looks">
+          <p className="text-[11px] leading-relaxed text-zinc-500">Subtle, professional looks for people: the grade lives in the light, the background and the finish, and the skin is held to its natural colour. The starred ones suit this photo best.</p>
+          <div className="grid grid-cols-2 gap-1.5">
+            {portraitList.looks.map((l) => (
+              <button key={l.id} disabled={busyPortrait} onClick={() => runPortrait(l.id, portraitSel?.k ?? 1)} title={`${l.blurb} · ${l.reason}`}
+                className={`overflow-hidden rounded-lg border text-left transition-colors disabled:opacity-60 ${portraitSel?.id === l.id ? 'border-indigo-400 bg-indigo-950' : 'border-zinc-700 hover:border-zinc-500'}`}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={`${API_URL}/api/portrait_thumb/${sid}/${l.id}`} alt={l.label} loading="lazy" className="aspect-[3/2] w-full bg-zinc-800 object-cover" />
+                <div className="px-2 py-1.5">
+                  <div className="truncate text-[12px] font-medium text-zinc-100">{l.recommended ? '★ ' : ''}{l.label}</div>
+                  <div className="truncate text-[10px] text-zinc-400">{l.reason}</div>
+                </div>
+              </button>
+            ))}
+          </div>
+          {busyPortrait && <p className="text-[11px] text-zinc-500">Building the look for this photo…</p>}
+          {portraitSel && (
+            <>
+              <Slider label="Look strength" value={portraitSel.k * 100} min={0} max={150} def={100} fmt={(v) => `${Math.round(v)}%`} onChange={onPortraitStrength} />
+              <ul className="list-disc space-y-1 pl-4 text-[11px] leading-snug text-zinc-400">{portraitSel.notes.map((n, i) => <li key={i}>{n}</li>)}</ul>
+              <button onClick={portraitOff} className={`${chip(false)} w-full`}>Back to the Auto edit</button>
+            </>
+          )}
+        </Sub>
+      )}
+      <Sub title="Long exposure · ND filter look" open={!portraitList?.has_people}>
         <p className="text-[11px] leading-relaxed text-zinc-500">The look of a slow shutter and an ND filter from a single frame: water turns to silk (rocks and reflections stay), clouds stretch along the wind, a graduated ND holds the sky down. Each acts only inside its own region.</p>
         {(() => {
           const le: LongExposureSettings = p.longexp ?? LONGEXP_OFF;
@@ -279,7 +333,7 @@ export default function LooksPanel({ ctx, suggest }: { ctx: EditCtx; suggest: Su
           );
         })()}
       </Sub>
-      <Sub title="Drama looks for this photo">
+      <Sub title="Drama looks for this photo" open={!portraitList?.has_people}>
         <p className="text-[11px] leading-relaxed text-zinc-500">The scene is analysed, then looks are generated for it: colour poured over every tone, a sky that keeps its clouds, bloom and mist. The starred ones fit best, but it is your call.</p>
         {!dramaList && <p className="text-[11px] text-zinc-500">Analysing the scene…</p>}
         {dramaList && (
