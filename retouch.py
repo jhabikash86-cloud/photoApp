@@ -28,6 +28,9 @@ def _luma(a: np.ndarray) -> np.ndarray:
     return a @ LUMA
 
 
+CREASE_SOFT = 0.55          # how much of a faint crease is softened (0 = off)
+
+
 def retouch_face(arr: np.ndarray, face: sc.Face, strength: float, masks: Dict[str, np.ndarray],
                  smoothing: float = 1.0, face_ev: float = 0.0, smooth: Optional[float] = None,
                  eyes_amt: Optional[float] = None, tone_amt: Optional[float] = None,
@@ -38,7 +41,8 @@ def retouch_face(arr: np.ndarray, face: sc.Face, strength: float, masks: Dict[st
     pts = face.pts
     fw = face.width
     pad = fw * 0.15
-    x0, y0 = np.maximum(pts[sc.OVAL].min(0) - pad, 0).astype(int)
+    top_pad = fw * 0.42                                             # room above the face outline: the outline cuts across the MIDDLE of the forehead, the skin goes on to the hairline
+    x0, y0 = np.maximum(pts[sc.OVAL].min(0) - [pad, top_pad], 0).astype(int)
     x1, y1 = np.minimum(pts[sc.OVAL].max(0) + pad, [W, H]).astype(int)
     if x1 - x0 < 40 or y1 - y0 < 40:
         return
@@ -67,12 +71,18 @@ def retouch_face(arr: np.ndarray, face: sc.Face, strength: float, masks: Dict[st
         feature(sc.LEFT_BROW, 0.02), feature(sc.RIGHT_BROW, 0.02),
         feature(sc.LIPS_OUTER, 0.015),
     ])
-    prior = np.clip(oval - exclude, 0, 1)
+    # The face outline stops mid-forehead. Retouching only inside it leaves a visible step (a 'line') across the forehead, so the skin area is
+    # extended upward to the hairline; the colour gate below keeps hair out, and the top edge is feathered over a wide band.
+    ext = int(fw * 0.30)
+    oval_up = cv2.dilate(oval, np.ones((ext + 1, 1), np.uint8), anchor=(0, 0)) if ext > 1 else oval            # grows the mask UPWARD only (anchor at the top row)
+    oval_up = np.maximum(oval, oval_up)
+    prior_core = np.clip(oval - exclude, 0, 1)
+    prior = np.clip(oval_up - exclude, 0, 1)
 
     # Colour gate in Lab, relative to this face's own median: adapts to any skin tone and rejects
     # lipstick, beards, teeth and stray background, but keeps blemishes (small deviations).
     lab = cv2.cvtColor(crop, cv2.COLOR_RGB2Lab)
-    sel = prior > 0.9
+    sel = prior_core > 0.9
     if sel.sum() < 200:
         return
     med = np.median(lab[sel], axis=0)
@@ -80,7 +90,13 @@ def retouch_face(arr: np.ndarray, face: sc.Face, strength: float, masks: Dict[st
     gate = np.clip((34 - dist) / 12, 0, 1)
     lum_gate = np.clip(1 - np.abs(lab[..., 0] - med[0]) / 70, 0, 1)
     skin = _blur(prior * gate * lum_gate, fw * 0.012)
-    skin = np.clip(skin, 0, 1)
+    # the added forehead strip fades out toward its top edge instead of ending in a line
+    rows = np.arange(shape[0], dtype=np.float32)[:, None]
+    top_edge = np.where(oval_up > 0.5, 1.0, 0.0).argmax(0).astype(np.float32)             # first row of the extended area, per column
+    fade = np.clip((rows - top_edge[None, :]) / max(2.0, fw * 0.16), 0, 1)
+    fade = fade * fade * (3 - 2 * fade)
+    skin = np.clip(skin * np.where(oval > 0.5, 1.0, fade), 0, 1)
+    skin = _blur(skin, fw * 0.02)
 
     s = float(np.clip(strength, 0, 1))
     pick = lambda v: s if v is None else float(np.clip(v, 0, 1.5))
@@ -125,6 +141,20 @@ def retouch_face(arr: np.ndarray, face: sc.Face, strength: float, masks: Dict[st
         lab2[..., 2] = a_ * np.sin(rot) + b_ * np.cos(rot)
     lab2[..., 1:] *= (1 - 0.06 * skin * s_tone)[..., None]  # slightly less chroma: calmer, creamier skin
     out = cv2.cvtColor(lab2, cv2.COLOR_Lab2RGB)
+
+    # ---- Crease softening, done AFTER the brightening and sculpting (they scale the contrast of every crease): they make faint forehead creases, under-eye lines and similar suddenly visible, and a pro
+    # softens them by about half (never removes them: a face without lines looks fake). Only mid-scale, low-amplitude, luminance-only detail inside the skin.
+    if s_smooth > 0.02 and CREASE_SOFT > 0:
+        yy = _luma(out)
+        g1 = cv2.GaussianBlur(yy, (0, 0), max(1.0, fw * 0.006))
+        g2 = cv2.GaussianBlur(yy, (0, 0), max(3.0, fw * 0.035))
+        band = g1 - g2
+        rel = band / (g2 + 0.05)                                           # contrast relative to the local brightness, so brightening cannot hide the measure
+        soft_band = (g2 + 0.05) * 0.06 * np.tanh(rel / 0.06)                          # only gentle detail: strong edges (brows, hairline, nostrils) are left alone
+        core = _blur(cv2.erode((skin > 0.5).astype(np.uint8), np.ones((3, 3), np.uint8), iterations=max(1, int(fw * 0.01))).astype(np.float32), fw * 0.01)
+        k_c = CREASE_SOFT * min(1.0, s_smooth * 1.4) * core
+        dy = -soft_band * np.where(band < 0, 1.0, 0.45) * k_c               # dark creases are softened more than bright ridges
+        out = (out * (1 + dy / (yy + 1e-3))[..., None]).astype(np.float32)
 
     # ---- 3. Eyes: brighter, crisper, slightly richer iris -----------------------------------------
     eye_m = _blur(eyes, fw * 0.006)[..., None]

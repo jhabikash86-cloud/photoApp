@@ -980,6 +980,32 @@ def t_portrait_looks(an, p) -> Result:
         f"top {ids[:3]}; unsafe: {bad or 'none'}; mean change {np.mean(changes):.3f}; closest pair {min(gaps):.3f}; 0% changes {z:.3f}"
 
 
+def t_face_retouch_no_forehead_line(an, p) -> Result:
+    """The face retouch must not leave a step across the forehead. Its face outline cuts the forehead in half, and everything the retouch does (brighten,
+    tone, smooth) stops there: a visible line. The skin area must reach the hairline and fade out gently: the mask may not jump between neighbouring rows."""
+    import os
+    import engine
+    import retouch
+    jumps = []
+    for path in ("test_sheets/forehead_case_IMG_0827.jpeg", "test_sheets/IMG_3762.JPG", "test_sheets/IMG_5090.HEIC"):
+        if not os.path.exists(path):
+            continue
+        a = engine.analyze(path, "fh_" + os.path.basename(path)[:12])
+        src, _, sc = engine._target(a, 1800)
+        for fc in [f for f in engine._faces_at(a, sc) if f.area_frac >= 0.02][:1]:
+            arr, pm = src.copy(), {}
+            retouch.retouch_face(arr, fc, 1.0, pm, 1.0, 0.1, smooth=0.4, eyes_amt=0.3, tone_amt=1.0, sculpt_amt=0.3, lips_amt=0.1)
+            x0, y0 = fc.pts.min(0)
+            x1, y1 = fc.pts.max(0)
+            fw, fh = x1 - x0, y1 - y0
+            prof = pm["skin"][:, int(x0 + 0.4 * fw):int(x1 - 0.4 * fw)].mean(1)
+            ys = np.arange(len(prof))
+            band = (ys >= y0 - 0.18 * fh) & (ys <= y0 + 0.15 * fh)
+            jumps.append(float(np.abs(np.diff(prof[band])).max()))
+    return "face retouch leaves no step across the forehead (skin mask reaches the hairline, no jump)", bool(jumps and max(jumps) < 0.035), \
+        f"{len(jumps)} faces; largest jump of the skin mask between neighbouring rows: {max(jumps) if jumps else 0:.3f} (the old outline-limited mask gave 0.05-0.07)"
+
+
 TESTS: List[Callable] = [
     t_mask_alignment_and_range, t_mask_operations, t_mask_controls, t_local_edit_stays_inside_mask,
     t_db_off_is_identity, t_db_highlights_and_shadows_protected, t_db_preserves_skin_texture, t_db_no_halo,
@@ -987,7 +1013,7 @@ TESTS: List[Callable] = [
     t_render_size_matches_image, t_neutral_params_are_identity, t_slider_directions, t_srgb_pipeline, t_light_scene_read,
     t_custom_mask_shapes, t_gradient_and_radial_geometry, t_brush_resolution_independent, t_range_masks_select_what_they_claim,
     t_mask_limit_and_refine, t_custom_mask_edit_stays_inside, t_point_curve,
-    t_region_coverage, t_region_paint_fix, t_lut_behaviour, t_match_reference, t_banded_ops_are_exact, t_smart_looks, t_adaptive_looks, t_sky_studio, t_sky_replacement, t_sky_full_res_matte, t_drama_operations, t_drama_looks, t_white_level_and_look_scale, t_long_exposure, t_geometry, t_cull_quality, t_dust_spots, t_portrait_looks,
+    t_region_coverage, t_region_paint_fix, t_lut_behaviour, t_match_reference, t_banded_ops_are_exact, t_smart_looks, t_adaptive_looks, t_sky_studio, t_sky_replacement, t_sky_full_res_matte, t_drama_operations, t_drama_looks, t_white_level_and_look_scale, t_long_exposure, t_geometry, t_cull_quality, t_dust_spots, t_portrait_looks, t_face_retouch_no_forehead_line,
 ]
 
 
