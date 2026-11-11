@@ -51,19 +51,23 @@ def blur_map_from_subject(subject: np.ndarray, far: Optional[np.ndarray] = None)
 
 
 def blur_map_from_depth(depth: np.ndarray, subject: np.ndarray, focus: float = 50) -> np.ndarray:
-    """0 = in focus, 1 = maximum blur. Blur grows with the depth difference from the subject, both behind it
-    and in front of it (like a real lens). `focus` (0..100) widens the in-focus zone around the subject."""
+    """0 = in focus, 1 = maximum blur. Blur grows with the depth difference from the subject, behind it and in front of it, like a real lens, and
+    ALSO grows gradually with the distance from the subject's outline: the area right behind a person is only a little soft, and the picture never
+    turns into a sharp cut-out pasted on a smeared backdrop. `focus` (0..100) widens the in-focus zone around the subject."""
     H, W = subject.shape
+    edge = max(H, W)
     inside = subject > 0.5
     d_subject = float(np.median(depth[inside])) if inside.any() else 0.5
     zone = 0.03 + 0.22 * focus / 100                      # how much depth counts as "still sharp"
     diff = np.abs(depth - d_subject)
-    b = np.clip((diff - zone) / 0.45, 0, 1) ** 0.8
-    # the matte (not a sharp margin) handles the transition at the outline; a margin would leave a crisp halo of
-    # background around the subject. Only a hair-thin ramp stops depth noise right at the contour.
+    rest = diff[~inside]
+    span = float(np.clip(np.percentile(rest, 92) - zone, 0.2, 0.6)) if rest.size else 0.45       # the picture's own depth range, so a shallow scene is not blurred to the maximum everywhere
+    b = np.clip((diff - zone) / span, 0, 1) ** 1.15
     dist = cv2.distanceTransform((~inside).astype(np.uint8), cv2.DIST_L2, 5)
-    b = b * np.clip(dist / (0.002 * max(H, W) + 1), 0, 1)
-    b = cv2.GaussianBlur(b.astype(np.float32), (0, 0), max(1.5, max(H, W) / 500))
+    ramp = np.clip(dist / (0.075 * edge + 1), 0, 1)
+    ramp = ramp * ramp * (3 - 2 * ramp)                   # smoothstep: soft just behind the outline, full blur only well away from the subject
+    b = b * (0.25 + 0.75 * ramp) * np.clip(dist / (0.002 * edge + 1), 0, 1)
+    b = cv2.GaussianBlur(b.astype(np.float32), (0, 0), max(2.0, edge / 220))                   # the depth map is blobby: smooth, never stepped
     return np.clip(b * (1 - np.clip(subject, 0, 1)), 0, 1)
 
 
@@ -78,7 +82,7 @@ def apply(arr: np.ndarray, subject: np.ndarray, amount: float, size: float = 50,
     H, W = arr.shape[:2]
     edge = max(H, W)
     a = amount / 100
-    radius_max = edge * (0.004 + 0.036 * a) * (0.6 + 0.8 * size / 100)
+    radius_max = edge * (0.003 + 0.025 * a) * (0.6 + 0.8 * size / 100)       # a real portrait lens at a wide aperture: 100% is strong but still believable
     if radius_max < 1.2:
         return arr
 
@@ -93,10 +97,10 @@ def apply(arr: np.ndarray, subject: np.ndarray, amount: float, size: float = 50,
 
     # Light points become soft discs: brighten only the luminance of very bright pixels (hue is untouched).
     y = arr @ LUMA
-    gain = 1 + (highlights / 100) * 2.2 * np.clip((y - 0.82) / 0.18, 0, 1) ** 2
+    gain = 1 + (highlights / 100) * 1.1 * np.clip((y - 0.86) / 0.14, 0, 1) ** 2
     src = arr * gain[..., None]
 
-    radii = radius_max * np.array([0.12, 0.28, 0.55, 1.0], np.float32)
+    radii = radius_max * np.array([0.06, 0.12, 0.2, 0.31, 0.46, 0.65, 0.82, 1.0], np.float32)     # geometric steps: the cross-fade between layers never shows
     levels = [arr]
     for r in radii:
         num = _disc_blur(src * bgw[..., None], r)
