@@ -37,6 +37,29 @@ def _disc_blur(img: np.ndarray, r: float) -> np.ndarray:
     return cv2.filter2D(img, -1, _disc(r), borderType=cv2.BORDER_REFLECT)
 
 
+def depth_consistent_subject(person: np.ndarray, depth: np.ndarray, skin: Optional[np.ndarray] = None) -> np.ndarray:
+    """The person mask with anything clearly BEHIND the person taken out. The segmentation mask often picks up pieces of the background that touch or
+    resemble the person (a clothes rack, a curtain, a door frame): left in the mask they stay sharp next to the hair and look pasted on. The depth map knows
+    those pieces are far behind the face. Things nearer than the face (hands, an arm reaching out) are kept."""
+    inside = person > 0.5
+    if inside.sum() < 100:
+        return person
+    anchor = (skin > 0.6) if skin is not None and (skin > 0.6).sum() > 60 else inside
+    d_face = float(np.median(depth[anchor]))
+    keep = 1.0 - np.clip((d_face - 0.20 - depth) / 0.10, 0, 1)
+    keep = cv2.GaussianBlur(keep.astype(np.float32), (0, 0), max(1.0, max(person.shape) / 400))
+    out = person * keep
+    # a removed piece should not leave a speck: keep only the large connected region(s) of the cleaned mask
+    n, lab, st, _ = cv2.connectedComponentsWithStats((out > 0.5).astype(np.uint8))
+    if n > 2:
+        big = max(st[1:, cv2.CC_STAT_AREA])
+        ok = np.zeros(n, bool)
+        for i in range(1, n):
+            ok[i] = st[i, cv2.CC_STAT_AREA] >= 0.15 * big
+        out = out * cv2.GaussianBlur(ok[lab].astype(np.float32), (0, 0), 1.0)
+    return np.clip(out, 0, 1).astype(np.float32)
+
+
 def blur_map_from_subject(subject: np.ndarray, far: Optional[np.ndarray] = None) -> np.ndarray:
     """0 = in focus (the subject), 1 = maximum blur. Distance from the subject stands in for depth."""
     H, W = subject.shape

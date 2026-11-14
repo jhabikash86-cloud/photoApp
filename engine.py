@@ -949,9 +949,13 @@ def _render(an: Analysis, p: EditParams, edge: Optional[int], draft: bool, float
         if an.depth is not None:
             dmap = _memo(an, ("depth", size), lambda: _resize(an.depth.astype(np.float32), size).clip(0, 1))
         bsrc = out
+        bperson, bmatte = m["person"], matte
+        if dmap is not None:                                       # the subject for the blur: the person minus pieces of background that the depth map puts far behind
+            bperson = _memo(an, ("bokeh_subject", size) + ck, lambda: bokeh.depth_consistent_subject(m["person"], dmap, m.get("skin")))
+            bmatte = _memo(an, ("bokeh_matte", size) + ck, lambda: matting.refine_alpha(src, bperson, m.get("hair")))
         out = _memo(an, ("bokeh", hash(up), e.bokeh, e.bokeh_size, e.bokeh_highlights, e.bokeh_focus) + ck,
-                    lambda: bokeh.apply(bsrc, m["person"], e.bokeh, e.bokeh_size, e.bokeh_highlights, far, dmap, e.bokeh_focus,
-                                        m.get("hair"), float(an.stats.get("noise", 0.0)), matte))
+                    lambda: bokeh.apply(bsrc, bperson, e.bokeh, e.bokeh_size, e.bokeh_highlights, far, dmap, e.bokeh_focus,
+                                        m.get("hair"), float(an.stats.get("noise", 0.0)), bmatte))
         up = up + ("bokeh", e.bokeh, e.bokeh_size, e.bokeh_highlights, e.bokeh_focus)
 
     # 5b. keep the picture's own white level: highlight recovery and sky burn squeeze the top of the tonal range (a pro edit keeps real whites)
