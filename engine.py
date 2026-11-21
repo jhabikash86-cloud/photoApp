@@ -969,7 +969,14 @@ def _render(an: Analysis, p: EditParams, edge: Optional[int], draft: bool, float
     # 6. finishing
     if e.glow and not draft:
         out = retouch.dreamy_glow(out, e.glow / 100 * 0.3, m.get("sky"), m.get("skin"))
-    out = grade.vignette(out, e.vignette, e.vignette_mid)
+    vig = e.vignette
+    if vig < 0:
+        # A dark vignette has a soft ceiling. Past a point it stops adding mood and starts making a spotlight: the area around the subject stays bright while the
+        # rest of the picture sinks, and the subject ends up in a bright halo. The ceiling is lower when a person is the subject, and values near the usual range
+        # (-10 .. -25) pass through almost unchanged, so only the extreme settings are tamed.
+        ceiling = 32.0 if (an.stats.get("person_frac", 0) > 0.06 and "person" in m) else 70.0
+        vig = -ceiling * float(np.tanh(-vig / ceiling))
+    out = grade.vignette(out, vig, e.vignette_mid)
     if not draft:
         out = grade.grain(out, e.grain)
 

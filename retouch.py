@@ -199,19 +199,27 @@ def background_falloff(arr: np.ndarray, face: sc.Face, strength: float) -> None:
 
 
 def dreamy_glow(arr: np.ndarray, amount: float, sky: np.ndarray = None, skin: np.ndarray = None) -> np.ndarray:
-    """Soft highlight bloom (pro-mist style) with a faint warm tint and slightly lifted blacks."""
+    """Soft highlight bloom (pro-mist style) with a faint warm tint.
+
+    A glow should make bright things glow and leave dark detail alone. Screening the blurred highlights over EVERYTHING (as a plain glow does) lays a pale veil
+    across dark hair, dark clothing and shadow detail, and hair edges turn hazy with a light halo around them. Here the bloom is added only where the pixel is
+    itself bright or mid-toned: the darker the pixel, the less glow it receives, so hair strands and dark edges stay crisp and keep their black."""
     long_edge = max(arr.shape[:2])
     hi = np.clip(arr - 0.45, 0, 1) / 0.55
     bloom = cv2.GaussianBlur(hi, (0, 0), long_edge / 90)
-    out = 1 - (1 - arr) * (1 - bloom * amount)               # screen blend
+    y = (arr @ np.array([0.2126, 0.7152, 0.0722], np.float32))
+    ys = cv2.GaussianBlur(y, (0, 0), max(0.8, long_edge / 1200))                 # the pixel's own brightness, lightly smoothed so a thin dark strand counts as dark
+    recv = np.clip((ys - 0.16) / 0.38, 0, 1)
+    recv = (recv * recv * (3 - 2 * recv))[..., None]                              # 0 for dark hair and shadows, 1 for bright areas
+    out = 1 - (1 - arr) * (1 - bloom * amount * recv)                               # screen blend, only where the pixel can take it
     warm = amount * 0.06 * np.array([1.0, 0.35, -0.7], np.float32)
     keep = np.zeros(arr.shape[:2], np.float32)
     for m in (sky, skin):   # no warm tint on the sky, and none on skin (it would only make people orange)
         if m is not None:
             keep = np.maximum(keep, np.clip(m, 0, 1))
     w = (1 - keep[..., None])
-    out = out * (1 + warm * w)  # a whisper of warmth
-    return np.clip(out * (1 - 0.012) + 0.012, 0, 1)             # lift blacks a touch
+    out = out * (1 + warm * w * recv)  # a whisper of warmth
+    return np.clip(out * (1 - 0.012 * recv) + 0.012 * recv, 0, 1)             # lift blacks a touch, but never the black of the hair
 
 
 def skin_reference_angle(arr: np.ndarray, face: sc.Face) -> float:
