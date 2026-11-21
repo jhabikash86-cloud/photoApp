@@ -60,15 +60,59 @@ def is_raw(path: str) -> bool:
     return os.path.splitext(path)[1].lower() in RAW_EXT
 
 
+LUMA_ = np.array([0.2126, 0.7152, 0.0722], np.float32)
+RAW_PROTECT_HIGHLIGHTS = True
+
+
+def _srgb_to_lin(x: np.ndarray) -> np.ndarray:
+    return np.where(x <= 0.04045, x / 12.92, ((x + 0.055) / 1.055) ** 2.4).astype(np.float32)
+
+
+def _lin_to_srgb(x: np.ndarray) -> np.ndarray:
+    x = np.clip(x, 0, 1)
+    return np.where(x <= 0.0031308, 12.92 * x, 1.055 * np.power(x, 1 / 2.4) - 0.055).astype(np.float32)
+
+
+def develop_raw(path: str, max_edge: Optional[int] = None) -> np.ndarray:
+    """A camera raw file as float32 sRGB 0..1, developed WITHOUT clipping.
+
+    LibRaw's default 'auto brightness' stretches every picture until about 1% of the pixels are pure white: highlight detail that the sensor recorded
+    (a raw file clips nothing at the camera's own exposure) is thrown away before the edit starts. Here the picture is developed as shot and given
+    one baseline exposure (like the 'baseline exposure' of a raw converter): bright enough to read as a normal picture, never so bright that the
+    brightest 0.3% of any colour channel pass 1.05 (they sit in the shoulder, graded but never hard-clipped), with a soft shoulder (not a hard clip) for the specular few that remain. Highlights, whites and dehaze then have the
+    whole recorded range to work with."""
+    import rawpy
+    with rawpy.imread(path) as r:
+        half = bool(max_edge) and max(r.sizes.width, r.sizes.height) >= 2 * max_edge
+        if not RAW_PROTECT_HIGHLIGHTS:
+            rgb = r.postprocess(half_size=half, use_camera_wb=True, output_bps=16, output_color=rawpy.ColorSpace.sRGB, highlight_mode=rawpy.HighlightMode.Blend)
+            return rgb.astype(np.float32) / 65535.0
+        rgb = r.postprocess(half_size=half, use_camera_wb=True, output_bps=16, output_color=rawpy.ColorSpace.sRGB, highlight_mode=rawpy.HighlightMode.Blend,
+                            no_auto_bright=True)
+    x = _srgb_to_lin(rgb.astype(np.float32) / 65535.0)
+    sub = x[::4, ::4]
+    y = sub @ LUMA_
+    top, med = float(np.percentile(sub.max(axis=2), 99.7)), float(np.median(y))          # the brightest CHANNEL: a saturated sky clips one channel long before its luminance does
+    gain = float(np.clip(1.05 / max(top, 1e-4), 0.6, 16.0))                            # the highlights set the exposure: nothing is ever pushed into clipping
+    x = x * gain
+    x = np.where(x > 0.88, 0.88 + 0.12 * np.tanh((x - 0.88) / 0.12), x)               # soft shoulder: nothing hard-clips
+    med2 = float(np.median(x[::4, ::4] @ LUMA_))
+    if med2 < 0.19:                                                                  # baseline tone curve: lift the mids with the white point fixed (a gamma in linear light),
+        target = min(0.19, 3.0 * med2)                                               # at most ~1.6 stops: a dark scene stays dark, a normal one gets a normal start
+        p = float(np.clip(np.log(target) / np.log(max(med2, 1e-4)), 0.6, 1.0))        # the way a raw converter's baseline curve gives a normal-looking start
+        yl = np.maximum(x @ LUMA_, 1e-5)                                           # lift the LUMINANCE only (colour ratios untouched): a per-channel gamma would shift hues
+        x = x * (np.power(np.clip(yl, 0, 1), p) / yl)[..., None]
+        x = np.minimum(x, 1.0)
+    return _lin_to_srgb(x)
+
+
 def _load_raw(path: str, max_edge: Optional[int]) -> Image.Image:
     """Camera raw (NEF, DNG, ARW, CR2, ...) via LibRaw. With max_edge, uses the fast half-size decode."""
     import io
     import rawpy
 
     with rawpy.imread(path) as r:
-        half = bool(max_edge) and max(r.sizes.width, r.sizes.height) >= 2 * max_edge
-        rgb = r.postprocess(half_size=half, use_camera_wb=True, output_bps=8, output_color=rawpy.ColorSpace.sRGB,
-                            highlight_mode=rawpy.HighlightMode.Blend)  # Blend recovers clipped highlights
+        rgb = (np.clip(develop_raw(path, max_edge), 0, 1) * 255 + 0.5).astype(np.uint8)
         exif = None
         try:  # the embedded preview JPEG carries the camera's EXIF (lens, ISO, date, ...)
             th = r.extract_thumb()
@@ -88,12 +132,7 @@ def load_float(path: str, max_edge: Optional[int] = None) -> np.ndarray:
     that way, so shadow lifts, highlight recovery and dodge & burn have the sensor's full tonal range to work
     with (no banding). Other formats are as precise as they were stored (usually 8 bits)."""
     if is_raw(path):
-        import rawpy
-        with rawpy.imread(path) as r:
-            half = bool(max_edge) and max(r.sizes.width, r.sizes.height) >= 2 * max_edge
-            rgb = r.postprocess(half_size=half, use_camera_wb=True, output_bps=16, output_color=rawpy.ColorSpace.sRGB,
-                                highlight_mode=rawpy.HighlightMode.Blend)
-        return rgb.astype(np.float32) / 65535.0
+        return develop_raw(path, max_edge)
     return np.asarray(load(path, max_edge), dtype=np.float32) / 255.0
 
 
