@@ -48,6 +48,13 @@ export function ColourGradingPanel({ ctx, part = 'all' }: { ctx: EditCtx; part?:
             <button key={c} onClick={() => ctx.update((cur) => ({ ...cur, wb_mode: c }), true, true)} className={chip(p.wb_mode === c)}>{WB_LABELS[c] ?? c}</button>
           ))}
         </div>
+        {!ctx.p.geometry?.enabled && ctx.setWbPicking && (
+          <button onClick={() => ctx.setWbPicking!(!ctx.wbPicking)} className={`${chip(!!ctx.wbPicking)} w-full flex items-center justify-center gap-2`}
+            title="Click on something that should be neutral grey or white: a white shirt, a grey wall, clouds. The white balance is set from it.">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m4 20 4.5-1 9-9a2.1 2.1 0 0 0-3-3l-9 9L4 20Z" /><path d="m13.5 7.5 3 3" /></svg>
+            {ctx.wbPicking ? 'Click a neutral spot in the photo…' : 'White balance eyedropper'}
+          </button>
+        )}
         <PSlider ctx={ctx} path={['basic', 'temperature']} def={{ key: 'temperature', label: 'Temperature' }} tint="#f59e0b" />
         <PSlider ctx={ctx} path={['basic', 'tint']} def={{ key: 'tint', label: 'Tint' }} tint="#d946ef" />
         <div className="text-[10px] uppercase tracking-widest text-zinc-500 mt-2">Tone</div>

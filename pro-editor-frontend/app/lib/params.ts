@@ -186,6 +186,8 @@ export type EditCtx = {
   set: (path: Path, value: number | boolean, immediate?: boolean) => void;
   update: (fn: (p: Params) => Params, immediate?: boolean, commit?: boolean) => void;
   flash: (m: string) => void;
+  wbPicking?: boolean;
+  setWbPicking?: (v: boolean) => void;
 };
 
 export type SliderDef = { key: string; label: string; min?: number; max?: number; fmt?: (v: number) => string };

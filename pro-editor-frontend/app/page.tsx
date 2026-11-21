@@ -73,6 +73,7 @@ export default function Editor() {
   const [selMask, setSelMask] = useState<string | null>(null);
   const [maskEditing, setMaskEditing] = useState(true);
   const [picking, setPicking] = useState(false);
+  const [wbPicking, setWbPicking] = useState(false);
   const [suggestions, setSuggestions] = useState<{ sid: string; data: Suggest } | null>(null);
   const [fixing, setFixing] = useState(false);          // painting corrections onto the selected automatic region
   const [showCustomMask, setShowCustomMask] = useState(true);
@@ -401,7 +402,7 @@ export default function Editor() {
   const ctx: EditCtx | null = ready && active?.neutral ? {
     p: p!, auto: auto!, neutral: active.neutral, analysis: active.analysis!, regions: active.regions, sid: active.sid!, hasPerson,
     set: (path, v, immediate) => updateParams((cur) => setIn(cur, path, v), immediate),
-    update: updateParams, flash,
+    update: updateParams, flash, wbPicking, setWbPicking,
   } : null;
   const manual = ready ? diffCount(p, auto) : 0;
   const toggleAuto = (v: boolean) => {
@@ -448,7 +449,7 @@ export default function Editor() {
   };
   const fixLayer = ready && tab === 'masks' && fixing && selR ? newLayer('brush', 0, { id: '__fix', strokes: selR.strokes ?? [] }) : null;
   const toolLayer = fixLayer ?? (selLayer && maskEditing ? selLayer : null);
-  const toolActive = !!fixLayer || !!selLayer && selLayer.enabled && maskEditing && ['linear', 'radial', 'brush'].includes(selLayer.kind) || (!!selLayer && maskEditing && selLayer.kind === 'color' && picking);
+  const toolActive = wbPicking || !!fixLayer || !!selLayer && selLayer.enabled && maskEditing && ['linear', 'radial', 'brush'].includes(selLayer.kind) || (!!selLayer && maskEditing && selLayer.kind === 'color' && picking);
 
   // overlay of the selected custom mask (geometry only: adjustments do not change what is selected)
   const geoKey = selLayer ? JSON.stringify({ ...selLayer, adj: 0, name: '', enabled: 0 }) : '';
@@ -528,7 +529,21 @@ export default function Editor() {
         {/* canvas + filmstrip */}
         <div className="h-[40%] md:h-auto shrink-0 md:shrink md:flex-1 min-w-0 flex flex-col relative">
           <Canvas key={active?.id ?? 'none'} beforeUrl={beforeUrl} afterUrl={shownAfter} overlayUrl={p?.geometry?.enabled ? undefined : (customOverlayUrl ?? maskOverlayUrl ?? overlayUrl)} clipUrl={clipUrl} toolActive={toolActive}
-            tool={toolLayer && !p?.geometry?.enabled ? (geo) => (
+            tool={wbPicking && !p?.geometry?.enabled ? (geo) => (
+              <svg width={geo.w} height={geo.h} className="absolute inset-0 touch-none select-none" style={{ cursor: 'crosshair' }}
+                onPointerDown={async (e) => {
+                  const r = e.currentTarget.getBoundingClientRect();
+                  const x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height;
+                  setWbPicking(false);
+                  try {
+                    const res = await fetch(`${API_URL}/api/wb_pick`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: active!.sid, x, y, wb_mode: p!.wb_mode }) });
+                    const d = await res.json();
+                    if (!res.ok) { flash(d.detail || 'Could not read that spot'); return; }
+                    updateParams((cur) => ({ ...cur, basic: { ...cur.basic, temperature: d.temperature, tint: d.tint } }), true, true);
+                    flash(d.note ?? 'White balance set from that spot');
+                  } catch { flash('Could not read that spot'); }
+                }} />
+            ) : toolLayer && !p?.geometry?.enabled ? (geo) => (
               <MaskOverlay layer={toolLayer} geo={geo} brush={brush} picking={picking} onPicked={() => setPicking(false)}
                 onLayer={(fn, commit) => (toolLayer.id === '__fix'
                   ? updateParams((cur) => ({ ...cur, regions: { ...cur.regions, [selRegion]: { ...cur.regions[selRegion], strokes: fn({ ...toolLayer, strokes: cur.regions[selRegion].strokes ?? [] }).strokes } } }), !!commit, !!commit)

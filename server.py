@@ -1071,3 +1071,50 @@ def portrait_apply(req: PortraitRequest):
     with LOCKS[req.session_id]:
         p, notes, facts = portrait_looks.build(an, req.params, req.look_id, req.strength / 100.0)
     return {"params": p.model_dump(), "notes": notes, "facts": facts}
+
+
+# ---------------------------------------------------------------------------------------------
+# White balance eyedropper: click something that should be neutral grey / white
+# ---------------------------------------------------------------------------------------------
+class WBPick(BaseModel):
+    session_id: str
+    x: float                      # 0..1 across the picture as shown
+    y: float
+    radius: float = 0.012         # of the long edge
+    wb_mode: str = "asshot"       # the base white balance the temperature / tint sliders sit on top of
+
+
+@app.post("/api/wb_pick")
+def wb_pick(req: WBPick):
+    """Temperature and tint (slider values) that make the clicked area neutral."""
+    import colorcal
+    an = _session(req.session_id)
+    with LOCKS[req.session_id]:
+        a = an.work
+        H, W = a.shape[:2]
+        r = max(2, int(req.radius * max(H, W)))
+        cx, cy = int(np.clip(req.x, 0, 1) * (W - 1)), int(np.clip(req.y, 0, 1) * (H - 1))
+        y0, y1, x0, x1 = max(0, cy - r), min(H, cy + r + 1), max(0, cx - r), min(W, cx + r + 1)
+        patch = np.power(np.clip(a[y0:y1, x0:x1].reshape(-1, 3), 0, 1), 2.2)
+        lum = patch @ np.array([0.2126, 0.7152, 0.0722], np.float32)
+        keep = (lum > np.percentile(lum, 15)) & (lum < np.percentile(lum, 95))          # ignore specks and glints inside the patch
+        c = np.median(patch[keep] if keep.sum() > 4 else patch, axis=0)
+        if float(c.min()) < 0.004:
+            raise HTTPException(400, "That spot is too dark to read a colour from. Click something light grey or white.")
+        gain_needed = np.array([c[1] / c[0], 1.0, c[1] / c[2]], np.float32)             # makes the patch neutral
+        base = an.wb.candidates.get(req.wb_mode, np.ones(3, np.float32))
+        tt = gain_needed / np.maximum(np.asarray(base, np.float32), 1e-4)               # what the sliders must add on top of the base
+        a_t = 0.5 * np.log2(tt[0] / tt[2])
+        mid = np.sqrt(tt[0] * tt[2])
+        b_t = -np.log2(tt[1] / mid)
+        temp = float(np.clip(a_t / 0.5 * 100.0 * 1.0, -100, 100))
+        tint = float(np.clip(b_t / 0.3 * 100.0, -100, 100))
+        chroma = float((c.max() - c.min()) / max(c.max(), 1e-4))
+        note = None
+        if abs(a_t / 0.5 * 100.0) > 100 or abs(b_t / 0.3 * 100.0) > 100:
+            note = "That is a very strong colour cast: the Temperature / Tint sliders reached their end, so it is only partly corrected."
+        elif chroma > 0.45:
+            note = "That spot is strongly coloured, so it is probably not neutral. A white or grey object works best."
+        elif float(c.max()) > 0.9:
+            note = "That spot is very bright: if it is clipped, the colour reading is unreliable."
+    return {"temperature": round(temp, 1), "tint": round(tint, 1), "note": note}

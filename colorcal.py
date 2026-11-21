@@ -16,7 +16,7 @@ GAMMA = 2.2
 LUMA = np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
 SKIN_HUE_TARGET = 52.0    # Lab hue angle (degrees) of natural skin, near-constant across skin tones
 SKIN_HUE_TOL = 6.0
-MAX_LOG_SHIFT = 0.22      # never move a channel more than ~25% in auto mode
+MAX_LOG_SHIFT = 0.06      # per channel, so the warm/cool balance moves at most ~12%: bigger corrections are the user's call (eyedropper, 'Neutral')
 BASE_STRENGTH = 0.85      # auto correction is not full neutralisation
 
 
@@ -164,7 +164,8 @@ def estimate(rgb: np.ndarray, sky: Optional[np.ndarray] = None, skin: Optional[n
         res.note = "warm light preserved"
 
     # Trust scales with agreement between the estimators: unsure -> stay near as-shot.
-    v = np.clip(v * BASE_STRENGTH * (0.35 + 0.65 * res.confidence), -MAX_LOG_SHIFT, MAX_LOG_SHIFT)
+    trust = float(np.clip((res.confidence - 0.25) / 0.55, 0.0, 1.0))                 # unsure estimators = leave the photo as shot (the camera's own white balance is usually right)
+    v = np.clip(v * BASE_STRENGTH * trust, -MAX_LOG_SHIFT, MAX_LOG_SHIFT)
     res.gains = _norm(_from_log2d(v))
 
     full = _norm(_from_log2d(np.clip((V[keep] * W[keep, None]).sum(0) / W[keep].sum(), -0.3, 0.3)))
