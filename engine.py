@@ -617,6 +617,10 @@ def auto_params(an: Analysis, look: str = "dreamy", light: Optional[str] = None,
         _apply_plan(an, p, r, kind, GRADE_SCALE.get(look, 1.0))
     _limit_tone(p)
     p.dodge_burn = auto_lighting(an)
+    if kind in ("portrait", "people") and an.stats.get("person_frac", 0) > 0.2:
+        # A close portrait keeps the soft fall-off of light around the head. Strong highlight recovery darkens the bright background far from the person
+        # more than the area beside the hair, flattening that fall-off: the head ends up outlined by a pale band. Recover only what the picture needs.
+        p.basic.highlights = max(p.basic.highlights, -30.0)
     return _govern(an, p)
 
 

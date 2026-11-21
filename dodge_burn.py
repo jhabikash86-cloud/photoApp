@@ -142,7 +142,9 @@ def compute_ev(arr: np.ndarray, masks: Dict[str, np.ndarray], p: DodgeBurn) -> O
         gy, gx = np.mgrid[0:h, 0:w].astype(np.float32)
         dist = np.hypot((gx / w - cx), (gy / h - cy) * h / w) / 0.9
         fall = _smoothstep(0.08, 0.8, dist)                                  # 0 near the subject, 1 far away
-        ev_bg -= (p.separation / 100) * SEP_BURN_EV * bg_m * (0.35 + 0.65 * fall)
+        # The burn must reach the subject's outline at nearly full strength. Weakening it next to the subject (as before: 35% there, 100% far away) leaves a light
+        # band hugging the hair and shoulders: a halo. Only a small extra darkening is added far from the subject, like a vignette.
+        ev_bg -= (p.separation / 100) * SEP_BURN_EV * bg_m * (0.88 + 0.12 * fall)
         lift = subj_m if skin_m is None else np.clip(subj_m - 0.5 * skin_m, 0, 1)   # lift clothes/hair more than skin
         ev_subj += (p.separation / 100) * SEP_LIFT_EV * lift
 

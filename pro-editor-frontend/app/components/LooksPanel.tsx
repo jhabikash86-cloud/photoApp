@@ -17,6 +17,10 @@ const dramaStore = new Map<string, DramaState>();
 type PortraitItem = { id: string; label: string; blurb: string; fit: number; reason: string; recommended: boolean };
 type PortraitState = { id: string; k: number; notes: string[]; base: Params };
 const portraitStore = new Map<string, PortraitState>();
+/** Forget what the Looks panel remembers about a photo (which look is applied, and the edit it was built on): used when the photo is reset. */
+export function clearLookStores(sid: string) {
+  dramaStore.delete(sid); portraitStore.delete(sid); lookStore.delete(sid); matchStore.delete(sid);
+}
 const DRAMA_SLIDERS: { key: string; label: string; min: number; max: number; hint: string }[] = [
   { key: 'mood', label: 'Colour mood', min: 0, max: 100, hint: 'How strongly the look\'s colours replace the picture\'s own cast' },
   { key: 'enrich', label: 'Richer colours', min: -100, max: 100, hint: 'Make the colours that are there richer' },

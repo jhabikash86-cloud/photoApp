@@ -12,7 +12,7 @@ import Filmstrip from './components/Filmstrip';
 import Histogram from './components/Histogram';
 import Slider from './components/Slider';
 import Toggle from './components/Toggle';
-import LooksPanel from './components/LooksPanel';
+import LooksPanel, { clearLookStores } from './components/LooksPanel';
 import CropPanel from './components/CropPanel';
 import ExportDialog from './components/ExportDialog';
 import SyncDialog from './components/SyncDialog';
@@ -208,7 +208,7 @@ export default function Editor() {
           regions: an.regions, originalUrl: an.original_url, previewUrl: (renderMap.current.set(`${API_URL}${an.preview_url}`, an.params), `${API_URL}${an.preview_url}`), histogram: an.histogram,
         });
         setSelRegion((r) => (an.regions.includes(r) ? r : an.regions[0] ?? 'sky'));
-        if (restored) { scheduleRender(id, restored, true); flash('Restored your previous edit of this photo'); }
+        if (restored) { scheduleRender(id, restored, true); flash('Restored your previous edit of this photo. Reset ▾ at the top starts over.'); }
       }
     } catch (e) {
       patch(id, { status: 'error', error: e instanceof Error ? e.message : 'Failed' });
@@ -309,6 +309,25 @@ export default function Editor() {
   };
 
   const resetAll = () => active?.auto && updateParams(() => active.auto!, true, true);
+  const [resetOpen, setResetOpen] = useState(false);
+  // Two ways to redo a photo. Both go through the normal history, so Undo (⌘Z) brings the old edit back.
+  const startOver = async () => {
+    if (!active?.auto) return;
+    setResetOpen(false);
+    if (active.sid) clearLookStores(active.sid);
+    fetch(`${API_URL}/api/edit/delete`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: active.file.name, size: active.file.size }) }).catch(() => {});
+    updateParams(() => active.auto!, true, true);
+    patch(active.id, { autoOn: true });
+    flash('Started over with a fresh automatic edit (⌘Z brings the old edit back)');
+  };
+  const backToOriginal = () => {
+    if (!active?.neutral) return;
+    setResetOpen(false);
+    if (active.sid) clearLookStores(active.sid);
+    updateParams(() => ({ ...active.neutral!, look: active.params?.look ?? active.neutral!.look }), true, true);
+    patch(active.id, { autoOn: false });
+    flash('Back to the original photo, no edits (⌘Z brings the edit back)');
+  };
 
   const [exportOpen, setExportOpen] = useState(false);
   const [syncOpen, setSyncOpen] = useState(false);
@@ -508,6 +527,24 @@ export default function Editor() {
             </div>
             <button onClick={() => step(-1)} disabled={!active || active.hIndex <= 0} title="Undo (Ctrl/⌘ Z)" className="px-3.5 py-2 rounded-lg text-base bg-zinc-800 hover:bg-zinc-700 disabled:opacity-30">↶</button>
             <button onClick={() => step(1)} disabled={!active || active.hIndex >= active.history.length - 1} title="Redo (Shift Ctrl/⌘ Z)" className="px-3.5 py-2 rounded-lg text-base bg-zinc-800 hover:bg-zinc-700 disabled:opacity-30">↷</button>
+            <div className="relative shrink-0">
+              <button onClick={() => setResetOpen((v) => !v)} title="Start over or go back to the original" className="px-3.5 py-2 rounded-lg text-[13px] bg-zinc-800 hover:bg-zinc-700">Reset ▾</button>
+              {resetOpen && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setResetOpen(false)} />
+                  <div className="absolute right-0 top-full z-50 mt-1 w-72 rounded-lg border border-zinc-700 bg-[#232327] p-1.5 shadow-xl whitespace-normal">
+                    <button onClick={startOver} className="w-full rounded-md px-3 py-2 text-left hover:bg-zinc-800">
+                      <span className="block text-[13px] text-zinc-100">Start over</span>
+                      <span className="block text-[11px] leading-snug text-zinc-400">Forget the saved edit of this photo and begin again from a fresh automatic edit.</span>
+                    </button>
+                    <button onClick={backToOriginal} className="w-full rounded-md px-3 py-2 text-left hover:bg-zinc-800">
+                      <span className="block text-[13px] text-zinc-100">Back to the original</span>
+                      <span className="block text-[11px] leading-snug text-zinc-400">Remove every adjustment: the photo exactly as it was shot.</span>
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
             {items.filter((i) => i.status === 'ready').length > 1 && (
               <button onClick={() => setSyncOpen(true)} title="Apply this photo's edit to the other open photos" className="px-3.5 py-2 rounded-lg text-[13px] bg-zinc-800 hover:bg-zinc-700">Sync…</button>
             )}
