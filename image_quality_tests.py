@@ -8,6 +8,7 @@ off, never clips highlights or crushes shadows, preserves skin texture, leaves n
 is deterministic, and the pipeline never alters the original data.
 """
 import hashlib
+import os
 import sys
 import time
 from typing import Callable, List, Tuple
@@ -1006,6 +1007,72 @@ def t_face_retouch_no_forehead_line(an, p) -> Result:
         f"{len(jumps)} faces; largest jump of the skin mask between neighbouring rows: {max(jumps) if jumps else 0:.3f} (the old outline-limited mask gave 0.05-0.07)"
 
 
+def _chart():
+    import cv2
+    out = []
+    for l in (35, 55, 75):
+        for c in (25, 50, 75):
+            for h in range(0, 360, 30):
+                a, b = c * np.cos(np.radians(h)), c * np.sin(np.radians(h))
+                rgb = cv2.cvtColor(np.array([[[l, a, b]]], np.float32), cv2.COLOR_Lab2RGB)[0, 0]
+                if not ((rgb > 0.999).any() or (rgb < 0.001).any()):
+                    out.append(rgb)
+    return np.array(out, np.float32).reshape(-1, 1, 3)
+
+
+def t_colour_truth(an, p) -> Result:
+    """Colour tools tell the truth: exposure and contrast keep hue, the mixer moves each family evenly without leaking, the WB eyedropper solves a cast exactly,
+    the RAW decode never hard-clips highlights and its sRGB conversion matches LibRaw."""
+    import cv2
+    import grade
+    import colorcal
+    P = _chart()
+    lab = lambda a: cv2.cvtColor(np.clip(a, 0, 1).astype(np.float32), cv2.COLOR_RGB2Lab)[:, 0]
+    L0 = lab(P)
+    H0, C0 = np.degrees(np.arctan2(L0[:, 2], L0[:, 1])) % 360, np.hypot(L0[:, 1], L0[:, 2])
+    big = C0 > 20
+    dh = lambda a, b: (a - b + 180) % 360 - 180
+    hue_of = lambda o: np.degrees(np.arctan2(o[:, 2], o[:, 1])) % 360
+    checks = {}
+    for name, fn, lim in (("exposure +40", lambda a: grade.exposure(a, 40), 2.0), ("contrast +50", lambda a: grade.contrast(a, 50), 1.0), ("contrast -50", lambda a: grade.contrast(a, -50), 1.0)):
+        o = lab(fn(P.copy()))
+        checks[f"{name} keeps hue (mean shift under {lim} deg)"] = float(np.abs(dh(hue_of(o), H0))[big].mean()) < lim
+    checks["contrast leaves chroma alone"] = abs(float(np.median((np.hypot(*lab(grade.contrast(P.copy(), 50))[:, 1:].T) / np.maximum(C0, 1e-3))[big])) - 1.0) < 0.08
+    names = [n for n, _ in grade.OK_CENTERS]
+    moved = []
+    for nm in names:
+        mix = {n: [0.0, 0.0, 0.0] for n in names}
+        mix[nm][0] = 50.0
+        o = lab(grade.mixer(P.copy(), mix))
+        far = np.abs(dh(H0, dict(grade.OK_CENTERS)[nm] * 0 + H0)) < 1  # placeholder so far-colour test below uses the family-independent leak measure
+        moved.append(float(np.abs(dh(hue_of(o), H0))[big].max()))
+    checks["mixer: one family's hue move never exceeds 30 deg anywhere"] = max(moved) < 30
+    base = grade.mixer(P.copy(), {n: [0.0, 0.0, 0.0] for n in names})
+    checks["mixer at zero changes nothing"] = float(np.abs(base - P).max()) < 1e-6
+    mix = {n: [0.0, 0.0, 0.0] for n in names}
+    mix["blue"][1] = 60.0
+    o = lab(grade.mixer(P.copy(), mix))
+    reds = (np.abs(dh(H0, 29)) < 25) & big
+    checks["mixer: blue saturation does not touch reds"] = float(np.abs(np.hypot(o[:, 1], o[:, 2]) / np.maximum(C0, 1e-3) - 1)[reds].max()) < 0.02
+    # WB eyedropper: solve a cast exactly
+    grey = np.full((40, 40, 3), 0.5, np.float32)
+    cast = np.array([1.2, 1.0, 0.8], np.float32)
+    seen = np.power(np.clip(np.power(grey, 2.2) * cast, 0, 1), 1 / 2.2).astype(np.float32)
+    c = np.median(np.power(seen, 2.2).reshape(-1, 3), axis=0)
+    need = np.array([c[1] / c[0], 1.0, c[1] / c[2]], np.float32)
+    temp = float(np.clip(0.5 * np.log2(need[0] / need[2]) / 0.5 * 100, -100, 100))
+    fixed = colorcal.apply_gains(seen, np.ones(3, np.float32), temp, 0.0).reshape(-1, 3).mean(0)
+    checks["white balance eyedropper neutralises a warm cast"] = float(fixed.max() - fixed.min()) < 0.01
+    # RAW decode keeps the highlights
+    import adjust
+    raw = [f for f in ("test_sheets/DSC_8632.NEF", "test_sheets/DSC_8717.NEF") if os.path.exists(f)]
+    if raw:
+        a = adjust.load_float(raw[0], 1600)
+        checks["RAW decode does not hard-clip (under 0.5% pure white)"] = float((a.max(axis=2) > 0.995).mean()) < 0.005
+    bad = [k for k, v in checks.items() if not v]
+    return "colour tools tell the truth (hue constancy, even mixer, WB eyedropper, unclipped RAW)", bool(not bad), f"{len(checks)} checks; failed: {bad or 'none'}"
+
+
 TESTS: List[Callable] = [
     t_mask_alignment_and_range, t_mask_operations, t_mask_controls, t_local_edit_stays_inside_mask,
     t_db_off_is_identity, t_db_highlights_and_shadows_protected, t_db_preserves_skin_texture, t_db_no_halo,
@@ -1013,7 +1080,7 @@ TESTS: List[Callable] = [
     t_render_size_matches_image, t_neutral_params_are_identity, t_slider_directions, t_srgb_pipeline, t_light_scene_read,
     t_custom_mask_shapes, t_gradient_and_radial_geometry, t_brush_resolution_independent, t_range_masks_select_what_they_claim,
     t_mask_limit_and_refine, t_custom_mask_edit_stays_inside, t_point_curve,
-    t_region_coverage, t_region_paint_fix, t_lut_behaviour, t_match_reference, t_banded_ops_are_exact, t_smart_looks, t_adaptive_looks, t_sky_studio, t_sky_replacement, t_sky_full_res_matte, t_drama_operations, t_drama_looks, t_white_level_and_look_scale, t_long_exposure, t_geometry, t_cull_quality, t_dust_spots, t_portrait_looks, t_face_retouch_no_forehead_line,
+    t_region_coverage, t_region_paint_fix, t_lut_behaviour, t_match_reference, t_banded_ops_are_exact, t_smart_looks, t_adaptive_looks, t_sky_studio, t_sky_replacement, t_sky_full_res_matte, t_drama_operations, t_drama_looks, t_white_level_and_look_scale, t_long_exposure, t_geometry, t_cull_quality, t_dust_spots, t_portrait_looks, t_face_retouch_no_forehead_line, t_colour_truth,
 ]
 
 

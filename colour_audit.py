@@ -59,7 +59,7 @@ for ch, label in ((0, "hue +50 (expect +15°)"), (1, "saturation +50 (expect chr
     for nm in names:
         mix = {n: [0.0, 0.0, 0.0] for n in names}; mix[nm][ch] = 50.0
         o = lab(grade.mixer(P.copy(), mix))[:, 0]
-        hh = hue(o[:, 1], o[:, 2]); centre = {"red": 10, "orange": 45, "yellow": 95, "green": 140, "aqua": 195, "blue": 265, "purple": 305, "magenta": 345}[nm]
+        hh = hue(o[:, 1], o[:, 2]); centre = dict(grade.OK_CENTERS)[nm]
         near = (np.abs(dh(H0, centre)) < 18) & (C0 > 25); far = (np.abs(dh(H0, centre)) > 60) & (C0 > 25)
         if ch == 0: mv, lk = np.median(dh(hh, H0)[near]) if near.any() else float('nan'), np.abs(dh(hh, H0)[far]).max()
         elif ch == 1: mv, lk = np.median(np.hypot(o[:, 1], o[:, 2])[near] / C0[near]) if near.any() else float('nan'), np.abs(np.hypot(o[:, 1], o[:, 2]) / C0 - 1)[far].max()

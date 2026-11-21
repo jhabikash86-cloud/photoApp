@@ -73,6 +73,23 @@ def _lin_to_srgb(x: np.ndarray) -> np.ndarray:
     return np.where(x <= 0.0031308, 12.92 * x, 1.055 * np.power(x, 1 / 2.4) - 0.055).astype(np.float32)
 
 
+_XYZ2SRGB = np.array([[3.2406, -1.5372, -0.4986], [-0.9689, 1.8758, 0.0415], [0.0557, -0.2040, 1.0570]], np.float32)
+
+
+def _xyz_to_srgb_linear(xyz: np.ndarray) -> np.ndarray:
+    """Linear sRGB from XYZ with a gamut-safe mapping. The camera records colours outside sRGB (vivid blues, aquas, deep reds); a plain conversion clips
+    them channel by channel, which both flattens them and skews their hue (a saturated blue turns cyan). Here a colour that falls outside is brought back
+    along the line to its own grey (same brightness, same hue direction) just far enough to fit."""
+    rgb = xyz @ _XYZ2SRGB.T
+    y = np.maximum(xyz[..., 1:2], 1e-6)
+    mn = rgb.min(axis=-1, keepdims=True)
+    out = mn < 0
+    if out.any():
+        t = np.where(out, y / np.maximum(y - mn, 1e-6), 1.0)
+        rgb = np.where(out, y + (rgb - y) * t, rgb)
+    return np.maximum(rgb, 0).astype(np.float32)
+
+
 def develop_raw(path: str, max_edge: Optional[int] = None) -> np.ndarray:
     """A camera raw file as float32 sRGB 0..1, developed WITHOUT clipping.
 
@@ -87,9 +104,9 @@ def develop_raw(path: str, max_edge: Optional[int] = None) -> np.ndarray:
         if not RAW_PROTECT_HIGHLIGHTS:
             rgb = r.postprocess(half_size=half, use_camera_wb=True, output_bps=16, output_color=rawpy.ColorSpace.sRGB, highlight_mode=rawpy.HighlightMode.Blend)
             return rgb.astype(np.float32) / 65535.0
-        rgb = r.postprocess(half_size=half, use_camera_wb=True, output_bps=16, output_color=rawpy.ColorSpace.sRGB, highlight_mode=rawpy.HighlightMode.Blend,
-                            no_auto_bright=True)
-    x = _srgb_to_lin(rgb.astype(np.float32) / 65535.0)
+        xyz = r.postprocess(half_size=half, use_camera_wb=True, output_bps=16, output_color=rawpy.ColorSpace.XYZ, highlight_mode=rawpy.HighlightMode.Blend,
+                            no_auto_bright=True, gamma=(1, 1)).astype(np.float32) / 65535.0         # linear, in the wide XYZ space: nothing clipped yet
+    x = _xyz_to_srgb_linear(xyz)
     sub = x[::4, ::4]
     y = sub @ LUMA_
     top, med = float(np.percentile(sub.max(axis=2), 99.7)), float(np.median(y))          # the brightest CHANNEL: a saturated sky clips one channel long before its luminance does

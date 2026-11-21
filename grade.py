@@ -103,24 +103,51 @@ class _BandCtx(Ctx):
 # single operations
 # ----------------------------------------------------------------------------------------------
 @banded
+@banded
 def exposure(arr: np.ndarray, v: float) -> np.ndarray:
-    """+-100 = +-3 EV in linear light, with a soft shoulder so highlights roll off instead of clipping."""
+    """+-100 = +-3 EV in linear light. The brightest channel gets the soft shoulder and the other channels follow it (the colour ratios are kept), so a vivid
+    blue or red brightens as the same blue or red instead of clipping one channel at a time and skewing in hue; the over-range part drifts a little toward
+    white, the way film and raw converters roll highlights off."""
     if not v:
         return arr
     lin = np.power(np.clip(arr, 0, 1), GAMMA) * (2.0 ** (v / 100 * 3.0))
-    lin = np.where(lin > 0.8, 0.8 + 0.2 * np.tanh((lin - 0.8) / 0.2), lin)
-    return np.power(np.clip(lin, 0, 1), 1 / GAMMA)
+    m = lin.max(axis=2, keepdims=True)
+    m2 = np.where(m > 0.8, 0.8 + 0.2 * np.tanh((m - 0.8) / 0.2), m)
+    out = lin * (m2 / np.maximum(m, 1e-6))
+    over = np.clip((m - 0.8) / 1.6, 0, 1) * 0.30                                   # blown colours drift toward white, never to a hue-shifted clip
+    out = out * (1 - over) + m2 * over
+    return np.power(np.clip(out, 0, 1), 1 / GAMMA)
+
+
+def _limit_to_gamut(out: np.ndarray, y: np.ndarray) -> np.ndarray:
+    """Pull any colour that went outside 0..1 back toward its own luminance (hue and brightness kept) instead of clipping a channel."""
+    mx, mn = out.max(axis=2, keepdims=True), out.min(axis=2, keepdims=True)
+    t = np.ones_like(mx)
+    hi = mx > 1.0
+    t = np.where(hi, np.minimum(t, (1.0 - y) / np.maximum(mx - y, 1e-6)), t)
+    lo = mn < 0.0
+    t = np.where(lo, np.minimum(t, y / np.maximum(y - mn, 1e-6)), t)
+    return np.clip(y + (out - y) * np.clip(t, 0, 1), 0, 1)
 
 
 @banded
 def contrast(arr: np.ndarray, v: float) -> np.ndarray:
+    """An S-curve on the LUMINANCE; the colour follows. Curving each channel on its own changes saturation and hue (positive contrast turns skies teal and
+    reds orange); here the curve decides the brightness and every pixel keeps its own colour direction."""
     if not v:
         return arr
     k = v / 100
+    y = (arr @ LUMA)[..., None]
     if k > 0:
-        s = arr * arr * (3 - 2 * arr)
-        return np.clip(arr + (s - arr) * (1.6 * k), 0, 1)
-    return np.clip(0.5 + (arr - 0.5) * (1 + 0.75 * k), 0, 1)
+        s = y * y * (3 - 2 * y)
+        yt = np.clip(y + (s - y) * (1.6 * k), 0, 1)
+    else:
+        yt = np.clip(0.5 + (y - 0.5) * (1 + 0.75 * k), 0, 1)
+    ratio = yt / np.maximum(y, 1e-3)
+    out = arr * np.where(y > 1e-3, ratio, 1.0)
+    out = np.where(y > 1e-3, out, arr + (yt - y))
+    # chroma follows lightness the way it does in a print: a darker colour keeps its saturation, a lighter one keeps it too (colour difference scaled by the same ratio)
+    return _limit_to_gamut(out, yt)
 
 
 @banded
@@ -257,36 +284,87 @@ def temp_tint(arr: np.ndarray, t: float, ti: float = 0.0) -> np.ndarray:
     return colorcal.apply_gains(arr, np.ones(3, np.float32), t, ti)
 
 
+# ---------------------------------------------------------------------------------------------
+# Perceptual colour tools (OKLCH): the mixer and the hue shift
+# ---------------------------------------------------------------------------------------------
+# Where each colour family sits on the OKLCH hue circle (degrees). Hue windows overlap smoothly and add up to 1 everywhere, so a family follows its slider
+# evenly and never leaks into colours that are not its neighbours.
+OK_CENTERS = [("red", 29.0), ("orange", 58.0), ("yellow", 104.0), ("green", 142.0), ("aqua", 196.0), ("blue", 264.0), ("purple", 304.0), ("magenta", 335.0)]
+_M1 = np.array([[0.4122214708, 0.5363325363, 0.0514459929], [0.2119034982, 0.6806995451, 0.1073969566], [0.0883024619, 0.2817188376, 0.6299787005]], np.float32)
+_M2 = np.array([[0.2104542553, 0.7936177850, -0.0040720468], [1.9779984951, -2.4285922050, 0.4505937099], [0.0259040371, 0.7827717662, -0.8086757660]], np.float32)
+_M1I, _M2I = np.linalg.inv(_M1).astype(np.float32), np.linalg.inv(_M2).astype(np.float32)
+
+
+def _to_oklab(arr: np.ndarray) -> np.ndarray:
+    lin = np.power(np.clip(arr, 0, 1), GAMMA)
+    return np.cbrt(lin @ _M1.T) @ _M2.T
+
+
+def _from_oklab(lab: np.ndarray) -> np.ndarray:
+    lms = lab @ _M2I.T
+    return np.power(np.clip((lms * lms * lms) @ _M1I.T, 0, 1), 1 / GAMMA)
+
+
+def _family_weights(h_deg: np.ndarray) -> dict:
+    """Smooth partition of unity over the hue circle: {family: weight 0..1}."""
+    names = [n for n, _ in OK_CENTERS]
+    cs = np.array([c for _, c in OK_CENTERS], np.float32)
+    out = {n: np.zeros_like(h_deg) for n in names}
+    k = len(cs)
+    for i in range(k):
+        a, b = cs[i], cs[(i + 1) % k]
+        span = (b - a) % 360
+        pos = ((h_deg - a) % 360) / span
+        inside = pos <= 1.0
+        t = np.clip(pos, 0, 1)
+        t = t * t * (3 - 2 * t)                           # smoothstep: no kinks at the family centres
+        out[names[i]] = out[names[i]] + np.where(inside, 1 - t, 0)
+        out[names[(i + 1) % k]] = out[names[(i + 1) % k]] + np.where(inside, t, 0)
+    return out
+
+
+def _lch_adjust(arr: np.ndarray, hue_deg, sat_mul, lum_add, chroma_gate: bool = True) -> np.ndarray:
+    """Apply per-pixel (or scalar) hue rotation (degrees), chroma multiplier and lightness addition in OKLCH. Near-greys are left alone."""
+    lab = _to_oklab(arr)
+    L, a, b = lab[..., 0], lab[..., 1], lab[..., 2]
+    C = np.hypot(a, b)
+    H = np.arctan2(b, a)
+    gate = np.clip((C - 0.012) / 0.05, 0, 1) if chroma_gate else 1.0
+    H2 = H + np.radians(hue_deg) * gate
+    C2 = C * (1 + (np.asarray(sat_mul) * gate))
+    L2 = L + np.asarray(lum_add) * gate * np.clip(0.35 + 2.0 * C, 0, 1) * (1 - 0.6 * np.clip(np.abs(L - 0.5) * 2, 0, 1) ** 3)
+    lab2 = np.stack([np.clip(L2, 0, 1), C2 * np.cos(H2), C2 * np.sin(H2)], axis=-1).astype(np.float32)
+    out = _from_oklab(lab2)
+    y = (arr @ LUMA)[..., None]
+    yo = (out @ LUMA)[..., None]
+    return np.clip(out, 0, 1)
+
+
 @banded
 def hue_shift(arr: np.ndarray, v: float) -> np.ndarray:
-    """+-100 = +-30 degrees around the colour wheel."""
+    """+-100 = +-30 degrees around the (perceptual) colour wheel, brightness kept."""
     if not v:
         return arr
-    hsv = cv2.cvtColor(arr, cv2.COLOR_RGB2HSV)
-    hsv[..., 0] = (hsv[..., 0] + v / 100 * 30) % 360
-    return np.clip(cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB), 0, 1)
+    return _lch_adjust(arr, v / 100 * 30.0, 0.0, 0.0)
 
 
 @banded
 def mixer(arr: np.ndarray, mix: Dict[str, List[float]]) -> np.ndarray:
-    """Lightroom's colour mixer: hue, saturation and luminance per colour family."""
+    """Lightroom's colour mixer in a perceptual space. Each family (red ... magenta) has hue (+-100 = +-30 degrees), saturation (-100 = grey, +100 = twice the
+    colour) and luminance (+-100 = +-0.42 of lightness). The families overlap smoothly and sum to one, so every colour responds evenly."""
     if not mix or not any(any(v) for v in mix.values()):
         return arr
-    hsv = cv2.cvtColor(arr, cv2.COLOR_RGB2HSV)
-    h, s, val = hsv[..., 0], hsv[..., 1], hsv[..., 2]
-    dh, ds, dv = np.zeros_like(h), np.zeros_like(s), np.zeros_like(val)
+    lab = _to_oklab(arr)
+    H = np.degrees(np.arctan2(lab[..., 2], lab[..., 1])) % 360
+    w = _family_weights(H)
+    dh = np.zeros_like(H); ds = np.zeros_like(H); dl = np.zeros_like(H)
     for name, (hh, ss, ll) in mix.items():
-        if not (hh or ss or ll) or name not in MIX_CENTERS:
+        if name not in w or not (hh or ss or ll):
             continue
-        d = np.abs((h - MIX_CENTERS[name] + 180) % 360 - 180)
-        w = np.clip(1 - d / MIX_WIDTH[name], 0, 1) ** 1.3 * np.clip(s * 3, 0, 1)   # ignore near-greys
-        dh += w * (hh / 100 * 30)
-        ds += w * (ss / 100)
-        dv += w * (ll / 100 * 0.6)
-    hsv[..., 0] = (h + dh) % 360
-    hsv[..., 1] = np.clip(s * (1 + ds), 0, 1)
-    hsv[..., 2] = np.clip(val * (1 + dv), 0, 1)
-    return np.clip(cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB), 0, 1)
+        dh += w[name] * (hh / 100 * 30.0)
+        ds += w[name] * (ss / 100)
+        dl += w[name] * (ll / 100 * 0.42)
+    return _lch_adjust(arr, dh, ds, dl)
 
 
 def _hue_rgb(h: float) -> np.ndarray:
