@@ -159,6 +159,11 @@ class Geometry(BaseModel):
     zoom: float = Field(1.0, ge=1.0, le=4.0)            # 1 = the largest window that fits
     x: float = Field(0, ge=-1, le=1)                    # move the window inside the room that is left
     y: float = Field(0, ge=-1, le=1)
+    # Free crop (aspect 'free'): a rectangle drawn by hand, as fractions of the straightened picture (0..1), so it crops the same area at any size
+    cx0: float = Field(0.0, ge=0, le=1)
+    cy0: float = Field(0.0, ge=0, le=1)
+    cx1: float = Field(1.0, ge=0, le=1)
+    cy1: float = Field(1.0, ge=0, le=1)
 
 
 class SkyReplace(BaseModel):

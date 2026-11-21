@@ -14,6 +14,7 @@ import Slider from './components/Slider';
 import Toggle from './components/Toggle';
 import LooksPanel, { clearLookStores } from './components/LooksPanel';
 import CropPanel from './components/CropPanel';
+import CropOverlay, { CropRect } from './components/CropOverlay';
 import ExportDialog from './components/ExportDialog';
 import SyncDialog from './components/SyncDialog';
 import RegionPresetsPanel from './components/RegionPresetsPanel';
@@ -25,7 +26,7 @@ import { makeClipOverlay } from './lib/clip';
 import { GROUPS, applyGroup } from './lib/groups';
 import { instantFilter } from './lib/preview';
 import {
-  API_URL, Analysis, EditCtx, Histogram as HistData, Item, LOOKS, Params, diffCount, newLayer, setIn, GeometrySettings,
+  API_URL, Analysis, EditCtx, Histogram as HistData, Item, LOOKS, Params, diffCount, newLayer, setIn, GeometrySettings, GEOMETRY_OFF,
 } from './lib/params';
 
 const ACCEPT = '.jpg,.jpeg,.png,.webp,.heic,.heif,.tif,.tiff,.nef,.nrw,.dng,.cr2,.cr3,.crw,.arw,.sr2,.raf,.orf,.rw2,.pef,.srw,.3fr,.iiq';
@@ -308,6 +309,29 @@ export default function Editor() {
     updateParams((cur) => applyGroup(cur, auto, neutral, g, k), false, false, true);
   };
 
+  // ---------------------------------------------------------------- free crop: a box drawn on the photo
+  const [cropDraft, setCropDraft] = useState<CropRect | null>(null);          // set while the box is being edited
+  const cropPrev = useRef<CropRect>([0, 0, 1, 1]);
+  const withRect = (r: CropRect, extra: Partial<GeometrySettings> = {}) => (cur: Params): Params => ({
+    ...cur, geometry: { ...(cur.geometry ?? GEOMETRY_OFF), enabled: true, aspect: 'free', cx0: r[0], cy0: r[1], cx1: r[2], cy1: r[3], ...extra },
+  });
+  const startCrop = () => {
+    const g = p?.geometry ?? GEOMETRY_OFF;
+    const prev: CropRect = g.aspect === 'free' ? [g.cx0 ?? 0, g.cy0 ?? 0, g.cx1 ?? 1, g.cy1 ?? 1] : [0.08, 0.08, 0.92, 0.92];
+    cropPrev.current = g.aspect === 'free' ? prev : [0, 0, 1, 1];
+    setCropDraft(prev);
+    updateParams(withRect([0, 0, 1, 1], { zoom: 1, x: 0, y: 0 }), true, false);          // show the whole (straightened) picture while the box is drawn on it
+  };
+  const applyCrop = () => {
+    if (!cropDraft) return;
+    const r = cropDraft;
+    setCropDraft(null);
+    updateParams(withRect(r), true, true);
+  };
+  const cancelCrop = () => {
+    setCropDraft(null);
+    updateParams(withRect(cropPrev.current), true, true);
+  };
   const resetAll = () => active?.auto && updateParams(() => active.auto!, true, true);
   const [resetOpen, setResetOpen] = useState(false);
   // Two ways to redo a photo. Both go through the normal history, so Undo (⌘Z) brings the old edit back.
@@ -422,6 +446,7 @@ export default function Editor() {
     p: p!, auto: auto!, neutral: active.neutral, analysis: active.analysis!, regions: active.regions, sid: active.sid!, hasPerson,
     set: (path, v, immediate) => updateParams((cur) => setIn(cur, path, v), immediate),
     update: updateParams, flash, wbPicking, setWbPicking,
+    crop: { editing: !!cropDraft, rect: cropDraft ?? [0, 0, 1, 1], start: startCrop, apply: applyCrop, cancel: cancelCrop, reset: () => { setCropDraft(null); updateParams((cur) => ({ ...cur, geometry: { ...GEOMETRY_OFF } }), true, true); } },
   } : null;
   const manual = ready ? diffCount(p, auto) : 0;
   const toggleAuto = (v: boolean) => {
@@ -468,7 +493,7 @@ export default function Editor() {
   };
   const fixLayer = ready && tab === 'masks' && fixing && selR ? newLayer('brush', 0, { id: '__fix', strokes: selR.strokes ?? [] }) : null;
   const toolLayer = fixLayer ?? (selLayer && maskEditing ? selLayer : null);
-  const toolActive = wbPicking || !!fixLayer || !!selLayer && selLayer.enabled && maskEditing && ['linear', 'radial', 'brush'].includes(selLayer.kind) || (!!selLayer && maskEditing && selLayer.kind === 'color' && picking);
+  const toolActive = !!cropDraft || wbPicking || !!fixLayer || !!selLayer && selLayer.enabled && maskEditing && ['linear', 'radial', 'brush'].includes(selLayer.kind) || (!!selLayer && maskEditing && selLayer.kind === 'color' && picking);
 
   // overlay of the selected custom mask (geometry only: adjustments do not change what is selected)
   const geoKey = selLayer ? JSON.stringify({ ...selLayer, adj: 0, name: '', enabled: 0 }) : '';
@@ -566,7 +591,9 @@ export default function Editor() {
         {/* canvas + filmstrip */}
         <div className="h-[40%] md:h-auto shrink-0 md:shrink md:flex-1 min-w-0 flex flex-col relative">
           <Canvas key={active?.id ?? 'none'} beforeUrl={beforeUrl} afterUrl={shownAfter} overlayUrl={p?.geometry?.enabled ? undefined : (customOverlayUrl ?? maskOverlayUrl ?? overlayUrl)} clipUrl={clipUrl} toolActive={toolActive}
-            tool={wbPicking && !p?.geometry?.enabled ? (geo) => (
+            tool={cropDraft ? (geo) => (
+              <CropOverlay geo={geo} rect={cropDraft} onRect={setCropDraft} onApply={applyCrop} onCancel={cancelCrop} />
+            ) : wbPicking && !p?.geometry?.enabled ? (geo) => (
               <svg width={geo.w} height={geo.h} className="absolute inset-0 touch-none select-none" style={{ cursor: 'crosshair' }}
                 onPointerDown={async (e) => {
                   const r = e.currentTarget.getBoundingClientRect();
@@ -692,7 +719,7 @@ export default function Editor() {
             </>
           )}
         </aside>
-        <Rail tab={tab} onTab={setTab} dots={{ masks: ready ? diffCount(p!.regions, auto!.regions) + diffCount(p!.masks, auto!.masks) : 0, curves: ready ? diffCount(p!.tone, auto!.tone) : 0 }} />
+        <Rail tab={tab} onTab={(t) => { if (cropDraft && t !== 'crop') applyCrop(); setTab(t); }} dots={{ masks: ready ? diffCount(p!.regions, auto!.regions) + diffCount(p!.masks, auto!.masks) : 0, curves: ready ? diffCount(p!.tone, auto!.tone) : 0 }} />
         </div>
       </div>
     </div>

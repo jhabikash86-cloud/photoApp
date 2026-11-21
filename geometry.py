@@ -20,8 +20,15 @@ ASPECTS: Dict[str, Optional[float]] = {
 }
 
 
+def _free_rect(g: Geometry):
+    x0, x1 = sorted((float(g.cx0), float(g.cx1)))
+    y0, y1 = sorted((float(g.cy0), float(g.cy1)))
+    return x0, y0, max(x1, x0 + 0.01), max(y1, y0 + 0.01)
+
+
 def active(g: Geometry) -> bool:
-    return bool(g.enabled and (abs(g.angle) > 1e-3 or g.aspect not in ("original",) or g.zoom > 1.001))
+    free = g.aspect == "free" and _free_rect(g) != (0.0, 0.0, 1.0, 1.0)
+    return bool(g.enabled and (abs(g.angle) > 1e-3 or g.aspect not in ("original", "free") or free or g.zoom > 1.001))
 
 
 def _fit(w: float, h: float, theta: float, aspect: float) -> Tuple[float, float]:
@@ -39,7 +46,8 @@ def _inside(cw: float, ch: float, dx: float, dy: float, theta: float, w: float, 
         for sy in (-0.5, 0.5):
             px, py = dx + sx * cw, dy + sy * ch
             u, v = c * px + s * py, -s * px + c * py             # back into the source frame (rotate by -theta)
-            if abs(u) > w / 2 - 1.0 or abs(v) > h / 2 - 1.0:                  # one pixel of safety: the interpolation reads its neighbours
+            m = 1.0 if abs(theta) > 1e-6 else -0.01                          # one pixel of safety when rotated (the interpolation reads its neighbours); an unrotated crop may touch the edge
+            if abs(u) > w / 2 - m or abs(v) > h / 2 - m:
                 return False
     return True
 
@@ -70,9 +78,15 @@ def window(w: int, h: int, g: Geometry) -> Tuple[int, int, np.ndarray]:
         cw, ch = cw * k, ch * k
     z = max(1.0, g.zoom)
     cw, ch = cw / z, ch / z
+    free_dx = free_dy = 0.0
+    if g.aspect == "free":
+        # the hand-drawn rectangle lives inside that safe window: its size and its offset from the window's centre
+        x0, y0, x1, y1 = _free_rect(g)
+        free_dx, free_dy = ((x0 + x1) / 2 - 0.5) * cw, ((y0 + y1) / 2 - 0.5) * ch
+        cw, ch = cw * (x1 - x0), ch * (y1 - y0)
     # position: g.x, g.y in -1..1 move the window inside the room that is left
-    dx = g.x * (_max_shift(cw, ch, theta, w, h, 0, 1.0) if g.x >= 0 else _max_shift(cw, ch, theta, w, h, 0, -1.0))
-    dy = g.y * (_max_shift(cw, ch, theta, w, h, 1, 1.0) if g.y >= 0 else _max_shift(cw, ch, theta, w, h, 1, -1.0))
+    dx = g.x * (_max_shift(cw, ch, theta, w, h, 0, 1.0) if g.x >= 0 else _max_shift(cw, ch, theta, w, h, 0, -1.0)) + free_dx
+    dy = g.y * (_max_shift(cw, ch, theta, w, h, 1, 1.0) if g.y >= 0 else _max_shift(cw, ch, theta, w, h, 1, -1.0)) + free_dy
     if not _inside(cw, ch, dx, dy, theta, w, h):                       # both axes at their own limit can still leave a corner: pull back together
         lo, hi = 0.0, 1.0
         for _ in range(24):

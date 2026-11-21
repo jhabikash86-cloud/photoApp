@@ -41,8 +41,24 @@ export default function CropPanel({ ctx, sid }: { ctx: EditCtx; sid: string }) {
           onChange={(v) => setG({ angle: v }, false)} />
       </Sub>
       <Sub title="Crop">
+        {ctx.crop && (
+          ctx.crop.editing ? (
+            <div className="space-y-2 rounded-lg border border-indigo-400/50 bg-indigo-950/40 p-3">
+              <p className="text-[12px] leading-snug text-indigo-100">Drag a corner or an edge of the box on the photo to crop from that side. Drag inside it to move it, or drag outside to draw a new one.</p>
+              <div className="flex gap-2">
+                <button onClick={ctx.crop.apply} className="flex-1 rounded-lg bg-indigo-600 py-2 text-[13px] font-semibold hover:bg-indigo-500">Apply crop</button>
+                <button onClick={ctx.crop.cancel} className={`${chip(false)} px-4`}>Cancel</button>
+              </div>
+              <p className="text-[10.5px] text-indigo-200/70">Enter applies · Esc cancels</p>
+            </div>
+          ) : (
+            <button onClick={ctx.crop.start} className={`${chip(g.aspect === 'free' && g.enabled)} w-full`}>
+              {g.aspect === 'free' && g.enabled ? `Free crop · ${Math.round(((g.cx1 ?? 1) - (g.cx0 ?? 0)) * 100)}% × ${Math.round(((g.cy1 ?? 1) - (g.cy0 ?? 0)) * 100)}% of the picture (edit the box)` : 'Free crop: draw the box yourself'}
+            </button>
+          )
+        )}
         <div className="flex flex-wrap gap-1.5">
-          {ASPECTS.map((a) => <button key={a.id} onClick={() => setG({ aspect: a.id, x: 0, y: 0 })} className={chip(g.aspect === a.id)}>{a.label}</button>)}
+          {ASPECTS.map((a) => <button key={a.id} onClick={() => { if (ctx.crop?.editing) ctx.crop.cancel(); setG({ aspect: a.id, x: 0, y: 0, cx0: 0, cy0: 0, cx1: 1, cy1: 1 }); }} className={chip(g.aspect === a.id)}>{a.label}</button>)}
         </div>
         <Slider label="Zoom in" value={g.zoom * 100} min={100} max={400} def={100} fmt={(v) => `${Math.round(v)}%`} onChange={(v) => setG({ zoom: v / 100 }, false)} />
         {moved && (

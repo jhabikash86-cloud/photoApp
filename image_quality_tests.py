@@ -1108,6 +1108,35 @@ def t_bokeh_keeps_hair(an, p) -> Result:
         f"{len(results)} measurements; lowest {worst * 100:.0f}% (the version that blurred flyaways kept 31%)"
 
 
+def t_free_crop(an, p) -> Result:
+    """Free crop: a hand-drawn rectangle returns exactly that area, at preview and export size alike, and combines with straightening without empty corners."""
+    import cv2
+    import geometry
+    from params import Geometry
+    rng = np.random.default_rng(3)
+    h, w = 800, 1200
+    img = rng.random((h, w, 3)).astype(np.float32)
+    checks = {}
+    for (x0, y0, x1, y1) in ((0.25, 0.10, 0.75, 0.60), (0.0, 0.0, 0.5, 1.0), (0.6, 0.4, 1.0, 0.9), (0.3, 0.3, 0.7, 0.7)):
+        g = Geometry(enabled=True, aspect="free", cx0=x0, cy0=y0, cx1=x1, cy1=y1)
+        o = geometry.apply(img, g)
+        ref = img[int(round(y0 * h)):int(round(y1 * h)), int(round(x0 * w)):int(round(x1 * w))]
+        same = o.shape[:2] == ref.shape[:2] or (abs(o.shape[0] - ref.shape[0]) <= 1 and abs(o.shape[1] - ref.shape[1]) <= 1)
+        mh, mw = min(o.shape[0], ref.shape[0]), min(o.shape[1], ref.shape[1])
+        checks[f"box {x0:.2f},{y0:.2f}-{x1:.2f},{y1:.2f} returns that area"] = bool(same and float(np.abs(o[:mh, :mw] - ref[:mh, :mw]).mean()) < 0.02)
+    g = Geometry(enabled=True, aspect="free", cx0=0.2, cy0=0.2, cx1=0.8, cy1=0.9)
+    big, small = geometry.apply(img, g), geometry.apply(cv2.resize(img, (300, 200), interpolation=cv2.INTER_AREA), g)
+    checks["preview and export crop the same shape"] = abs(big.shape[1] / big.shape[0] - small.shape[1] / small.shape[0]) < 0.02
+    for ang in (-5.0, 7.0):
+        g2 = Geometry(enabled=True, aspect="free", angle=ang, cx0=0.0, cy0=0.0, cx1=1.0, cy1=1.0)
+        ow, oh, M = geometry.window(w, h, g2)
+        wm = cv2.warpAffine(np.ones((h, w), np.float32), M, (ow, oh), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+        checks[f"straightened {ang:+.0f} deg, full box: no empty corner"] = float((wm < 0.99).mean()) == 0.0
+    checks["a full box does nothing"] = geometry.apply(img, Geometry(enabled=True, aspect="free")) is img
+    bad = [k for k, v in checks.items() if not v]
+    return "free crop returns exactly the drawn area, at any size, with straightening", bool(not bad), f"{len(checks)} checks; failed: {bad or 'none'}"
+
+
 TESTS: List[Callable] = [
     t_mask_alignment_and_range, t_mask_operations, t_mask_controls, t_local_edit_stays_inside_mask,
     t_db_off_is_identity, t_db_highlights_and_shadows_protected, t_db_preserves_skin_texture, t_db_no_halo,
@@ -1115,7 +1144,7 @@ TESTS: List[Callable] = [
     t_render_size_matches_image, t_neutral_params_are_identity, t_slider_directions, t_srgb_pipeline, t_light_scene_read,
     t_custom_mask_shapes, t_gradient_and_radial_geometry, t_brush_resolution_independent, t_range_masks_select_what_they_claim,
     t_mask_limit_and_refine, t_custom_mask_edit_stays_inside, t_point_curve,
-    t_region_coverage, t_region_paint_fix, t_lut_behaviour, t_match_reference, t_banded_ops_are_exact, t_smart_looks, t_adaptive_looks, t_sky_studio, t_sky_replacement, t_sky_full_res_matte, t_drama_operations, t_drama_looks, t_white_level_and_look_scale, t_long_exposure, t_geometry, t_cull_quality, t_dust_spots, t_portrait_looks, t_face_retouch_no_forehead_line, t_colour_truth, t_bokeh_keeps_hair,
+    t_region_coverage, t_region_paint_fix, t_lut_behaviour, t_match_reference, t_banded_ops_are_exact, t_smart_looks, t_adaptive_looks, t_sky_studio, t_sky_replacement, t_sky_full_res_matte, t_drama_operations, t_drama_looks, t_white_level_and_look_scale, t_long_exposure, t_geometry, t_cull_quality, t_dust_spots, t_portrait_looks, t_face_retouch_no_forehead_line, t_colour_truth, t_bokeh_keeps_hair, t_free_crop,
 ]
 
 

@@ -82,8 +82,8 @@ export type Params = {
   longexp?: LongExposureSettings;
   geometry?: GeometrySettings;
 };
-export type GeometrySettings = { enabled: boolean; angle: number; aspect: string; zoom: number; x: number; y: number };
-export const GEOMETRY_OFF: GeometrySettings = { enabled: false, angle: 0, aspect: 'original', zoom: 1, x: 0, y: 0 };
+export type GeometrySettings = { enabled: boolean; angle: number; aspect: string; zoom: number; x: number; y: number; cx0?: number; cy0?: number; cx1?: number; cy1?: number };
+export const GEOMETRY_OFF: GeometrySettings = { enabled: false, angle: 0, aspect: 'original', zoom: 1, x: 0, y: 0, cx0: 0, cy0: 0, cx1: 1, cy1: 1 };
 export type LongExposureSettings = { enabled: boolean; water: number; water_dir: string; clouds: number; cloud_angle: number; grad_nd: number };
 export const LONGEXP_OFF: LongExposureSettings = { enabled: false, water: 0, water_dir: 'auto', clouds: 0, cloud_angle: 0, grad_nd: 0 };
 export type DramaSettings = {
@@ -188,6 +188,7 @@ export type EditCtx = {
   flash: (m: string) => void;
   wbPicking?: boolean;
   setWbPicking?: (v: boolean) => void;
+  crop?: { editing: boolean; rect: [number, number, number, number]; start: () => void; apply: () => void; cancel: () => void; reset: () => void };
 };
 
 export type SliderDef = { key: string; label: string; min?: number; max?: number; fmt?: (v: number) => string };
