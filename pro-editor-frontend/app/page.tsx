@@ -532,7 +532,7 @@ export default function Editor() {
               {resetOpen && (
                 <>
                   <div className="fixed inset-0 z-40" onClick={() => setResetOpen(false)} />
-                  <div className="absolute right-0 top-full z-50 mt-1 w-72 rounded-lg border border-zinc-700 bg-[#232327] p-1.5 shadow-xl whitespace-normal">
+                  <div className="fixed right-3 top-[58px] z-50 w-72 rounded-lg border border-zinc-700 bg-[#232327] p-1.5 shadow-xl whitespace-normal">
                     <button onClick={startOver} className="w-full rounded-md px-3 py-2 text-left hover:bg-zinc-800">
                       <span className="block text-[13px] text-zinc-100">Start over</span>
                       <span className="block text-[11px] leading-snug text-zinc-400">Forget the saved edit of this photo and begin again from a fresh automatic edit.</span>
