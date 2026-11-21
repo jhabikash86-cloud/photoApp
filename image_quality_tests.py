@@ -1073,6 +1073,41 @@ def t_colour_truth(an, p) -> Result:
     return "colour tools tell the truth (hue constancy, even mixer, WB eyedropper, unclipped RAW)", bool(not bad), f"{len(checks)} checks; failed: {bad or 'none'}"
 
 
+def t_bokeh_keeps_hair(an, p) -> Result:
+    """Bokeh must keep the hair: the fine strands and flyaways around the head stay as sharp as they were, and the blur does not smear them into a grey halo.
+    Measured as the share of high-frequency detail in the strip around the hair that survives bokeh at 60 and 100."""
+    import os
+    import cv2
+    import engine
+    results = []
+    for path in ("test_sheets/hair_case_flyaways.jpeg", "test_sheets/IMG_3762.JPG", "test_sheets/IMG_5093.heif"):
+        if not os.path.exists(path):
+            continue
+        a = engine.analyze(path, "bh_" + os.path.basename(path)[:10])
+        q = engine.auto_params(a, "auto")
+        src, size, _ = engine._target(a, 1400)
+        m = dict(engine._masks_at(a, size))
+        hair = m.get("hair")
+        if hair is None or "person" not in m:
+            continue
+        h = (hair > 0.25).astype(np.uint8)
+        k = max(3, max(size) // 60) | 1
+        band = (cv2.dilate(h, np.ones((k, k), np.uint8)) - cv2.erode(h, np.ones((k, k), np.uint8))) > 0
+        q0 = q.model_copy(deep=True)
+        q0.effects.bokeh = 0
+        base = np.asarray(engine.render(a, q0, 1400), np.float32) / 255
+        hp = lambda y: y - cv2.GaussianBlur(y, (0, 0), max(1.2, max(y.shape) / 700))
+        for bk in (60, 100):
+            q1 = q.model_copy(deep=True)
+            q1.effects.bokeh = bk
+            out = np.asarray(engine.render(a, q1, 1400), np.float32) / 255
+            L = np.array([0.2126, 0.7152, 0.0722], np.float32)
+            results.append((os.path.basename(path), bk, float(np.std(hp(out @ L)[band])) / max(float(np.std(hp(base @ L)[band])), 1e-6)))
+    worst = min(r[2] for r in results) if results else 0.0
+    return "bokeh keeps hair strands (at least 78% of the detail around the hair at bokeh 60 and 100)", bool(results and worst >= 0.78), \
+        f"{len(results)} measurements; lowest {worst * 100:.0f}% (the version that blurred flyaways kept 31%)"
+
+
 TESTS: List[Callable] = [
     t_mask_alignment_and_range, t_mask_operations, t_mask_controls, t_local_edit_stays_inside_mask,
     t_db_off_is_identity, t_db_highlights_and_shadows_protected, t_db_preserves_skin_texture, t_db_no_halo,
@@ -1080,7 +1115,7 @@ TESTS: List[Callable] = [
     t_render_size_matches_image, t_neutral_params_are_identity, t_slider_directions, t_srgb_pipeline, t_light_scene_read,
     t_custom_mask_shapes, t_gradient_and_radial_geometry, t_brush_resolution_independent, t_range_masks_select_what_they_claim,
     t_mask_limit_and_refine, t_custom_mask_edit_stays_inside, t_point_curve,
-    t_region_coverage, t_region_paint_fix, t_lut_behaviour, t_match_reference, t_banded_ops_are_exact, t_smart_looks, t_adaptive_looks, t_sky_studio, t_sky_replacement, t_sky_full_res_matte, t_drama_operations, t_drama_looks, t_white_level_and_look_scale, t_long_exposure, t_geometry, t_cull_quality, t_dust_spots, t_portrait_looks, t_face_retouch_no_forehead_line, t_colour_truth,
+    t_region_coverage, t_region_paint_fix, t_lut_behaviour, t_match_reference, t_banded_ops_are_exact, t_smart_looks, t_adaptive_looks, t_sky_studio, t_sky_replacement, t_sky_full_res_matte, t_drama_operations, t_drama_looks, t_white_level_and_look_scale, t_long_exposure, t_geometry, t_cull_quality, t_dust_spots, t_portrait_looks, t_face_retouch_no_forehead_line, t_colour_truth, t_bokeh_keeps_hair,
 ]
 
 

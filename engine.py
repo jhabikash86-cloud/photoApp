@@ -951,7 +951,7 @@ def _render(an: Analysis, p: EditParams, edge: Optional[int], draft: bool, float
         bsrc = out
         bperson, bmatte = m["person"], matte
         if dmap is not None:                                       # the subject for the blur: the person minus pieces of background that the depth map puts far behind
-            bperson = _memo(an, ("bokeh_subject", size) + ck, lambda: bokeh.depth_consistent_subject(m["person"], dmap, m.get("skin")))
+            bperson = _memo(an, ("bokeh_subject", size) + ck, lambda: bokeh.depth_consistent_subject(m["person"], dmap, m.get("skin"), m.get("hair")))
             bmatte = _memo(an, ("bokeh_matte", size) + ck, lambda: matting.refine_alpha(src, bperson, m.get("hair")))
         out = _memo(an, ("bokeh", hash(up), e.bokeh, e.bokeh_size, e.bokeh_highlights, e.bokeh_focus) + ck,
                     lambda: bokeh.apply(bsrc, bperson, e.bokeh, e.bokeh_size, e.bokeh_highlights, far, dmap, e.bokeh_focus,

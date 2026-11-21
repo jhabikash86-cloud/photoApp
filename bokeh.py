@@ -37,7 +37,7 @@ def _disc_blur(img: np.ndarray, r: float) -> np.ndarray:
     return cv2.filter2D(img, -1, _disc(r), borderType=cv2.BORDER_REFLECT)
 
 
-def depth_consistent_subject(person: np.ndarray, depth: np.ndarray, skin: Optional[np.ndarray] = None) -> np.ndarray:
+def depth_consistent_subject(person: np.ndarray, depth: np.ndarray, skin: Optional[np.ndarray] = None, hair: Optional[np.ndarray] = None) -> np.ndarray:
     """The person mask with anything clearly BEHIND the person taken out. The segmentation mask often picks up pieces of the background that touch or
     resemble the person (a clothes rack, a curtain, a door frame): left in the mask they stay sharp next to the hair and look pasted on. The depth map knows
     those pieces are far behind the face. Things nearer than the face (hands, an arm reaching out) are kept."""
@@ -47,6 +47,16 @@ def depth_consistent_subject(person: np.ndarray, depth: np.ndarray, skin: Option
     anchor = (skin > 0.6) if skin is not None and (skin > 0.6).sum() > 60 else inside
     d_face = float(np.median(depth[anchor]))
     keep = 1.0 - np.clip((d_face - 0.20 - depth) / 0.10, 0, 1)
+    # Never take anything away from the person's own hair and skin. A depth map is blurry exactly where hair meets the background and reads hair as
+    # "further back"; trusting it there turns the head into a smooth blob and everything beyond the blob gets blurred (the halo).
+    protect = np.zeros_like(keep)
+    if hair is not None:
+        protect = np.maximum(protect, np.clip((hair - 0.10) / 0.2, 0, 1))
+    if skin is not None:
+        protect = np.maximum(protect, np.clip((skin - 0.3) / 0.3, 0, 1))
+    protect = cv2.dilate(protect, np.ones((2 * max(2, max(person.shape) // 120) + 1,) * 2, np.uint8))
+    protect = cv2.GaussianBlur(protect, (0, 0), max(1.5, max(person.shape) / 300))
+    keep = np.maximum(keep, protect)
     keep = cv2.GaussianBlur(keep.astype(np.float32), (0, 0), max(1.0, max(person.shape) / 400))
     out = person * keep
     # a removed piece should not leave a speck: keep only the large connected region(s) of the cleaned mask
@@ -58,6 +68,26 @@ def depth_consistent_subject(person: np.ndarray, depth: np.ndarray, skin: Option
             ok[i] = st[i, cv2.CC_STAT_AREA] >= 0.15 * big
         out = out * cv2.GaussianBlur(ok[lab].astype(np.float32), (0, 0), 1.0)
     return np.clip(out, 0, 1).astype(np.float32)
+
+
+def strand_map(arr: np.ndarray, hair: Optional[np.ndarray], alpha: np.ndarray) -> np.ndarray:
+    """0..1: fine hair strands and flyaways around the head, in or beside the soft edge of the person. They are thin structures that stand out from what is
+    directly around them (dark strands on a light background, or light on dark) and they belong to the subject, so they must stay sharp and must not be
+    smeared into the blurred background. Found automatically from the picture: a thin high-contrast line inside the hair zone."""
+    H, W = alpha.shape
+    edge = max(H, W)
+    if hair is None:
+        return np.zeros_like(alpha)
+    zone = cv2.dilate((hair > 0.2).astype(np.uint8), cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * max(3, edge // 55) + 1,) * 2)).astype(np.float32)
+    near = cv2.dilate((alpha > 0.35).astype(np.uint8), np.ones((2 * max(3, edge // 70) + 1,) * 2, np.uint8)).astype(np.float32)   # touching or beside the person
+    zone = cv2.GaussianBlur(zone * near, (0, 0), max(1.5, edge / 400))
+    y = (arr @ LUMA).astype(np.float32)
+    ctx = cv2.GaussianBlur(y, (0, 0), max(3.0, edge / 220))                 # what is around a thin line: the local background brightness
+    d = np.abs(y - ctx)
+    fine = np.abs(cv2.GaussianBlur(y, (0, 0), max(0.7, edge / 1600)) - ctx)    # a thin line survives a small blur; broad shapes are handled by the matte
+    s = np.clip((d - 0.035) / 0.10, 0, 1) * np.clip((fine - 0.02) / 0.06, 0, 1)
+    s = cv2.dilate(s, np.ones((3, 3), np.uint8))                           # strands are antialiased: include their softened sides
+    return np.clip(s * zone, 0, 1).astype(np.float32)
 
 
 def blur_map_from_subject(subject: np.ndarray, far: Optional[np.ndarray] = None) -> np.ndarray:
@@ -117,6 +147,8 @@ def apply(arr: np.ndarray, subject: np.ndarray, amount: float, size: float = 50,
     # subject's colours never bleed into the blur.
     grow = max(3, int(edge * 0.003)) | 1
     bgw = np.clip(1 - cv2.dilate(sure_fg, np.ones((grow, grow), np.uint8)), 0, 1).astype(np.float32)
+    strands = strand_map(arr, hair, alpha)
+    bgw = bgw * (1.0 - strands)                                         # strand pixels are the subject: they never feed the background blur (that smear was the grey shadow around the hair)
 
     # Light points become soft discs: brighten only the luminance of very bright pixels (hue is untouched).
     y = arr @ LUMA
@@ -155,5 +187,6 @@ def apply(arr: np.ndarray, subject: np.ndarray, amount: float, size: float = 50,
         out = out + (g[..., None] * (noise / 255.0) * 0.8) * wblur
 
     fg = matting.decontaminate(arr, alpha, sure_fg)
-    al = alpha[..., None]
+    al = np.maximum(alpha, strands * 0.92)[..., None]                   # a strand is solid subject, however thin: keep the sharp original there
+    fg = np.where(strands[..., None] > 0.05, arr * strands[..., None] + fg * (1 - strands[..., None]), fg)
     return np.clip(fg * al + out * (1 - al), 0, 1)
